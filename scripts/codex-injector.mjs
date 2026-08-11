@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
@@ -19,11 +19,11 @@ import {
   formatLauncherReadinessLine,
 } from "../shared/taskboard-readiness.mjs";
 import {
-  findResidentInjectorPids,
   handleHostBindingPayload,
   reconcileInjectionRuntime,
   restartResidentInjector,
 } from "./codex-injector-runtime.mjs";
+import { createInjectorDevelopmentDiscovery } from "./codex-injector-discovery.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
 import {
   createTaskboardSupervisor,
@@ -43,6 +43,11 @@ const independentCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_PROFILE
 const sourceCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE
   ? path.resolve(process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE)
   : null;
+const injectorDiscovery = createInjectorDevelopmentDiscovery({
+  injectorPath,
+  projectRoot,
+  defaultPort: defaultCodexDebuggingPort,
+});
 const injectionPath = path.join(projectRoot, "inject", "codex-taskboard.user.js");
 const taskboardDataDirectory = process.env.CODEX_TASKBOARD_DATA_DIR
   ? path.resolve(process.env.CODEX_TASKBOARD_DATA_DIR)
@@ -508,57 +513,8 @@ function pipeCdpRuntime(browser) {
   };
 }
 
-function codexDebuggingPorts(preferredPort) {
-  const ports = new Set([preferredPort]);
-  const processes = spawnSync("/bin/ps", ["-axo", "command="], {
-    encoding: "utf8",
-    env: withoutTaskboardLauncherEnvironment(process.env),
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  if (processes.status !== 0) return [...ports];
-
-  for (const command of processes.stdout.split("\n")) {
-    if (!command.includes("/ChatGPT.app/") && !command.includes("/Codex.app/")) continue;
-    const match = command.match(/--remote-debugging-port=(\d+)/);
-    if (match) ports.add(Number(match[1]));
-  }
-  return [...ports];
-}
-
-function processCwd(pid) {
-  const result = spawnSync("/usr/sbin/lsof", [
-    "-a",
-    "-p",
-    String(pid),
-    "-d",
-    "cwd",
-    "-Fn",
-  ], {
-    encoding: "utf8",
-    env: withoutTaskboardLauncherEnvironment(process.env),
-    maxBuffer: 64 * 1024,
-  });
-  if (result.status !== 0) return null;
-  const cwd = result.stdout.split("\n").find((line) => line.startsWith("n"))?.slice(1);
-  return cwd ? path.resolve(cwd) : null;
-}
-
 function residentInjectorPids(port) {
-  const processes = spawnSync("/bin/ps", ["-axo", "pid=,command="], {
-    encoding: "utf8",
-    env: withoutTaskboardLauncherEnvironment(process.env),
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  if (processes.status !== 0) return [];
-  return findResidentInjectorPids({
-    processList: processes.stdout,
-    currentPid: process.pid,
-    injectorPath,
-    projectRoot,
-    port,
-    defaultPort: defaultCodexDebuggingPort,
-    cwdForPid: processCwd,
-  });
+  return injectorDiscovery.residentInjectorPids(port);
 }
 
 function startResidentInjector(
@@ -1548,7 +1504,9 @@ async function main() {
   if (options.daemon) {
     let port = options.port;
     if (!options.portExplicit) {
-      const candidates = codexDebuggingPorts(options.port);
+      const candidates = injectorDiscovery.debuggingPorts(options.port, {
+        operation: "Starting the injector daemon",
+      });
       const activePort = await Promise.any(candidates.map(async (candidate) => {
         if (!(await isReachable(`http://127.0.0.1:${candidate}/json/version`))) {
           throw new Error("unreachable");
@@ -1564,9 +1522,18 @@ async function main() {
   }
 
   if (options.refresh || options.refreshIfRunning) {
-    const ports = options.portExplicit
-      ? [options.port]
-      : codexDebuggingPorts(options.port);
+    const ports = injectorDiscovery.debuggingPorts(options.port, {
+      portExplicit: options.portExplicit,
+      optional: options.refreshIfRunning,
+      operation: "Refreshing an existing Codex window",
+    });
+    if (ports.length === 0) {
+      console.log(JSON.stringify({
+        refreshed: [],
+        skipped: `Automatic Codex discovery is unavailable on ${process.platform}; pass --port`,
+      }));
+      return;
+    }
     const refreshed = [];
     for (const port of ports) {
       if (!(await isReachable(`http://127.0.0.1:${port}/json/version`))) continue;
@@ -1584,6 +1551,8 @@ async function main() {
     console.log(JSON.stringify({ refreshed }, null, 2));
     return;
   }
+
+  injectorDiscovery.assertExternalCdpPort(options);
 
   let codexProcess = null;
   let cdpRuntime = null;

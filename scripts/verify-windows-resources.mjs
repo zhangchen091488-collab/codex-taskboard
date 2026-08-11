@@ -15,6 +15,7 @@ const scriptPath = fileURLToPath(import.meta.url);
 const defaultProjectRoot = path.resolve(path.dirname(scriptPath), "..");
 const selectedScripts = [
   "codex-cdp-pipe.mjs",
+  "codex-injector-discovery.mjs",
   "codex-injector.mjs",
   "codex-injector-runtime.mjs",
   "codex-rate-limits.mjs",

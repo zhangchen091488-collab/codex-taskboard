@@ -297,6 +297,7 @@ async function copyApplicationResources() {
   await mkdir(path.join(appResources, "scripts"), { recursive: true });
   for (const fileName of [
     "codex-cdp-pipe.mjs",
+    "codex-injector-discovery.mjs",
     "codex-injector.mjs",
     "codex-injector-runtime.mjs",
     "codex-rate-limits.mjs",

@@ -10,6 +10,7 @@ import { verifyWindowsResources } from "../scripts/verify-windows-resources.mjs"
 
 const selectedScripts = [
   "codex-cdp-pipe.mjs",
+  "codex-injector-discovery.mjs",
   "codex-injector.mjs",
   "codex-injector-runtime.mjs",
   "codex-rate-limits.mjs",

@@ -7,6 +7,10 @@ const runtimeSource = await readFile(
   new URL("../scripts/codex-injector-runtime.mjs", import.meta.url),
   "utf8",
 );
+const discoverySource = await readFile(
+  new URL("../scripts/codex-injector-discovery.mjs", import.meta.url),
+  "utf8",
+);
 const supervisorSource = await readFile(
   new URL("../scripts/taskboard-supervisor.mjs", import.meta.url),
   "utf8",
@@ -120,11 +124,20 @@ test("a completed web build refreshes an already-open Codex iframe", () => {
   assert.match(packageJson.scripts.build, /--refresh-if-running/);
   assert.match(packageJson.scripts["codex:refresh"], /--refresh/);
   assert.match(source, /async function refreshTaskboardFrames/);
-  assert.match(source, /function codexDebuggingPorts/);
+  assert.match(source, /injectorDiscovery\.debuggingPorts/);
   assert.match(source, /--remote-debugging-port=/);
   assert.match(source, /taskboard\.reloadFrame\(\)/);
   assert.match(source, /__codex_taskboard_refresh/);
   assert.match(source, /await restartResidentInjectorForRefresh\(port\)/);
+});
+
+test("release injector startup does not contain ps or lsof discovery", () => {
+  assert.doesNotMatch(source, /spawnSync|\/bin\/ps|\/usr\/sbin\/lsof/);
+  assert.match(discoverySource, /createInjectorDevelopmentDiscovery/);
+  assert.match(discoverySource, /platform === "darwin"/);
+  assert.match(discoverySource, /\/bin\/ps/);
+  assert.match(discoverySource, /\/usr\/sbin\/lsof/);
+  assert.doesNotMatch(discoverySource, /powershell|wmic|tasklist/i);
 });
 
 test("the injected iframe follows the configured local service port", () => {
