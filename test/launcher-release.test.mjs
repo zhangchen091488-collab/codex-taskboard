@@ -19,6 +19,11 @@ const windowsPlatformSource = await readFile(
   new URL("../src-tauri/src/platform/windows.rs", import.meta.url),
   "utf8",
 );
+const codexInstallationSource = await readFile(
+  new URL("../src-tauri/src/platform/codex_installation.rs", import.meta.url),
+  "utf8",
+);
+const [codexInstallationProductionSource] = codexInstallationSource.split("#[cfg(test)]");
 const rustReadinessSource = await readFile(
   new URL("../src-tauri/src/readiness.rs", import.meta.url),
   "utf8",
@@ -117,6 +122,22 @@ test("Windows process-tree lifecycle owns a kill-on-close Job Object", () => {
     launcherSource,
     /CreateJobObjectW|AssignProcessToJobObject|TerminateJobObject|JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/,
   );
+});
+
+test("Windows Codex discovery uses package metadata and a recoverable executable picker", () => {
+  assert.match(codexInstallationSource, /CODEX_APP_OVERRIDE_ENV/);
+  assert.match(codexInstallationSource, /CODEX_STORE_PRODUCT_ID[^\n]+9PLM9XGG6VKS/);
+  assert.match(codexInstallationSource, /CODEX_PACKAGE_NAME[^\n]+OpenAI\.Codex/);
+  assert.match(windowsPlatformSource, /PackageFamilyNameFromId/);
+  assert.match(windowsPlatformSource, /FindPackagesByPackageFamily/);
+  assert.match(windowsPlatformSource, /GetPackagePathByFullName/);
+  assert.match(windowsPlatformSource, /FormatApplicationUserModelId/);
+  assert.match(windowsPlatformSource, /blocking_pick_file/);
+  assert.match(windowsPlatformSource, /save_stored_selection/);
+  assert.match(launcherSource, /platform::discover_codex_installation/);
+  assert.doesNotMatch(windowsPlatformSource, /Program Files[\\/]WindowsApps/);
+  assert.doesNotMatch(codexInstallationProductionSource, /OpenAI\.Codex_[0-9]/);
+  assert.doesNotMatch(windowsPlatformSource, /(?:powershell|Get-AppxPackage|wmic)/i);
 });
 
 test("app exit and OS session teardown both request managed-tree cleanup", () => {

@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod codex_installation;
 pub mod process_tree;
 
 pub struct AppDirectories {
@@ -33,7 +34,10 @@ pub use macos::{
     MacProcessTree as NativeProcessTree,
 };
 #[cfg(target_os = "windows")]
-pub use windows::{app_directories, configure_app, WindowsProcessTree as NativeProcessTree};
+pub use windows::{
+    app_directories, configure_app, discover_codex_installation,
+    WindowsProcessTree as NativeProcessTree,
+};
 
 #[cfg(test)]
 mod tests {

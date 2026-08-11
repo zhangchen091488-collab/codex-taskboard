@@ -1,15 +1,25 @@
 use std::{
-    ffi::c_void,
+    ffi::{c_void, OsString},
     num::NonZeroU32,
-    os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    os::windows::{
+        ffi::OsStringExt,
+        io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    },
+    path::{Path, PathBuf},
     ptr::{null, null_mut},
     thread,
     time::{Duration, Instant},
 };
 
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
+use windows_sys::core::PWSTR;
 use windows_sys::Win32::{
-    Foundation::{GetLastError, HANDLE},
+    Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HANDLE},
+    Storage::Packaging::Appx::{
+        FindPackagesByPackageFamily, FormatApplicationUserModelId, GetPackagePathByFullName,
+        PackageFamilyNameFromId, PACKAGE_FILTER_HEAD, PACKAGE_ID,
+    },
     System::{
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
@@ -22,6 +32,12 @@ use windows_sys::Win32::{
 };
 
 use super::{
+    codex_installation::{
+        discover_automatic, load_stored_selection, save_stored_selection, validate_user_selection,
+        AutomaticDiscovery, CodexDiscoveryError, CodexInstallation, SystemPackageCandidate,
+        CODEX_APP_OVERRIDE_ENV, CODEX_PACKAGE_APPLICATION_ID, CODEX_PACKAGE_EXECUTABLE,
+        CODEX_PACKAGE_NAME, CODEX_PACKAGE_PUBLISHER,
+    },
     process_tree::{ProcessTree, ProcessTreeError, ProcessTreeState, StopResult},
     AppDirectories,
 };
@@ -44,6 +60,256 @@ fn last_platform_error(operation: &'static str, message: &'static str) -> Proces
         operation,
         code: Some(unsafe { GetLastError() } as i64),
         message: message.into(),
+    }
+}
+
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn string_from_wide_buffer(buffer: &[u16]) -> String {
+    let length = buffer
+        .iter()
+        .position(|character| *character == 0)
+        .unwrap_or(buffer.len());
+    OsString::from_wide(&buffer[..length])
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn string_from_wide_pointer(pointer: PWSTR, buffer: &[u16]) -> Result<String, String> {
+    if pointer.is_null() {
+        return Err("Windows package query returned a null package name".into());
+    }
+    let buffer_start = buffer.as_ptr() as usize;
+    let buffer_end = buffer_start.saturating_add(std::mem::size_of_val(buffer));
+    let pointer = pointer as usize;
+    if pointer < buffer_start || pointer >= buffer_end || (pointer - buffer_start) % 2 != 0 {
+        return Err("Windows package query returned a package name outside its buffer".into());
+    }
+    let offset = (pointer - buffer_start) / 2;
+    let package_name = &buffer[offset..];
+    if !package_name.contains(&0) {
+        return Err("Windows package query returned an unterminated package name".into());
+    }
+    Ok(string_from_wide_buffer(package_name))
+}
+
+fn package_family_name() -> Result<String, String> {
+    let mut name = wide_null(CODEX_PACKAGE_NAME);
+    let mut publisher = wide_null(CODEX_PACKAGE_PUBLISHER);
+    let package_id = PACKAGE_ID {
+        name: name.as_mut_ptr(),
+        publisher: publisher.as_mut_ptr(),
+        ..Default::default()
+    };
+    let mut length = 0;
+    let first = unsafe { PackageFamilyNameFromId(&package_id, &mut length, null_mut()) };
+    if first != ERROR_INSUFFICIENT_BUFFER {
+        return Err(format!(
+            "PackageFamilyNameFromId size query failed with Windows error {first}"
+        ));
+    }
+    let mut buffer = vec![0_u16; length as usize];
+    let second = unsafe { PackageFamilyNameFromId(&package_id, &mut length, buffer.as_mut_ptr()) };
+    if second != ERROR_SUCCESS {
+        return Err(format!(
+            "PackageFamilyNameFromId failed with Windows error {second}"
+        ));
+    }
+    Ok(string_from_wide_buffer(&buffer))
+}
+
+fn application_user_model_id(package_family_name: &str) -> Result<String, String> {
+    let family = wide_null(package_family_name);
+    let application = wide_null(CODEX_PACKAGE_APPLICATION_ID);
+    let mut length = 0;
+    let first = unsafe {
+        FormatApplicationUserModelId(
+            family.as_ptr(),
+            application.as_ptr(),
+            &mut length,
+            null_mut(),
+        )
+    };
+    if first != ERROR_INSUFFICIENT_BUFFER {
+        return Err(format!(
+            "FormatApplicationUserModelId size query failed with Windows error {first}"
+        ));
+    }
+    let mut buffer = vec![0_u16; length as usize];
+    let second = unsafe {
+        FormatApplicationUserModelId(
+            family.as_ptr(),
+            application.as_ptr(),
+            &mut length,
+            buffer.as_mut_ptr(),
+        )
+    };
+    if second != ERROR_SUCCESS {
+        return Err(format!(
+            "FormatApplicationUserModelId failed with Windows error {second}"
+        ));
+    }
+    Ok(string_from_wide_buffer(&buffer))
+}
+
+fn installed_package_full_names(package_family_name: &str) -> Result<Vec<String>, String> {
+    let family = wide_null(package_family_name);
+    for _ in 0..3 {
+        let mut count = 0;
+        let mut buffer_length = 0;
+        let first = unsafe {
+            FindPackagesByPackageFamily(
+                family.as_ptr(),
+                PACKAGE_FILTER_HEAD,
+                &mut count,
+                null_mut(),
+                &mut buffer_length,
+                null_mut(),
+                null_mut(),
+            )
+        };
+        if first == ERROR_SUCCESS && count == 0 {
+            return Ok(Vec::new());
+        }
+        if first != ERROR_INSUFFICIENT_BUFFER {
+            return Err(format!(
+                "FindPackagesByPackageFamily size query failed with Windows error {first}"
+            ));
+        }
+
+        let mut names = vec![null_mut(); count as usize];
+        let mut buffer = vec![0_u16; buffer_length as usize];
+        let second = unsafe {
+            FindPackagesByPackageFamily(
+                family.as_ptr(),
+                PACKAGE_FILTER_HEAD,
+                &mut count,
+                names.as_mut_ptr(),
+                &mut buffer_length,
+                buffer.as_mut_ptr(),
+                null_mut(),
+            )
+        };
+        if second == ERROR_INSUFFICIENT_BUFFER {
+            continue;
+        }
+        if second != ERROR_SUCCESS {
+            return Err(format!(
+                "FindPackagesByPackageFamily failed with Windows error {second}"
+            ));
+        }
+        names.truncate(count as usize);
+        return names
+            .into_iter()
+            .map(|name| string_from_wide_pointer(name, &buffer))
+            .collect();
+    }
+    Err("Windows package list changed repeatedly during discovery; please retry".into())
+}
+
+fn package_install_path(package_full_name: &str) -> Result<PathBuf, String> {
+    let full_name = wide_null(package_full_name);
+    let mut length = 0;
+    let first = unsafe { GetPackagePathByFullName(full_name.as_ptr(), &mut length, null_mut()) };
+    if first != ERROR_INSUFFICIENT_BUFFER {
+        return Err(format!(
+            "GetPackagePathByFullName size query failed with Windows error {first}"
+        ));
+    }
+    let mut buffer = vec![0_u16; length as usize];
+    let second =
+        unsafe { GetPackagePathByFullName(full_name.as_ptr(), &mut length, buffer.as_mut_ptr()) };
+    if second != ERROR_SUCCESS {
+        return Err(format!(
+            "GetPackagePathByFullName failed with Windows error {second}"
+        ));
+    }
+    Ok(PathBuf::from(OsString::from_wide(
+        &buffer[..buffer
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(buffer.len())],
+    )))
+}
+
+fn system_codex_candidates() -> Result<(Vec<SystemPackageCandidate>, Vec<String>), String> {
+    let family = package_family_name()?;
+    let application_user_model_id = application_user_model_id(&family)?;
+    let package_names = installed_package_full_names(&family)?;
+    let mut candidates = Vec::new();
+    let mut diagnostics = Vec::new();
+    for package_full_name in package_names {
+        match package_install_path(&package_full_name) {
+            Ok(install_path) => candidates.push(SystemPackageCandidate {
+                package_full_name,
+                executable_path: install_path.join(CODEX_PACKAGE_EXECUTABLE),
+                application_user_model_id: application_user_model_id.clone(),
+            }),
+            Err(error) => diagnostics.push(format!(
+                "无法解析已安装包 {package_full_name} 的位置：{error}"
+            )),
+        }
+    }
+    Ok((candidates, diagnostics))
+}
+
+pub fn discover_codex_installation(
+    app: &tauri::AppHandle,
+    data_directory: &Path,
+) -> Result<CodexInstallation, String> {
+    let mut diagnostics = Vec::new();
+    let stored_selection = match load_stored_selection(data_directory) {
+        Ok(selection) => selection,
+        Err(error) => {
+            diagnostics.push(error);
+            None
+        }
+    };
+    let system_candidates = match system_codex_candidates() {
+        Ok((candidates, system_diagnostics)) => {
+            diagnostics.extend(system_diagnostics);
+            candidates
+        }
+        Err(error) => {
+            diagnostics.push(format!("Windows 包元数据查询失败：{error}"));
+            Vec::new()
+        }
+    };
+    let explicit_override = std::env::var_os(CODEX_APP_OVERRIDE_ENV).map(PathBuf::from);
+    match discover_automatic(
+        explicit_override,
+        stored_selection,
+        system_candidates,
+        diagnostics,
+    )
+    .map_err(|error| error.to_string())?
+    {
+        AutomaticDiscovery::Found(installation) => Ok(installation),
+        AutomaticDiscovery::SelectionRequired { diagnostics } => {
+            let Some(file_path) = app
+                .dialog()
+                .file()
+                .add_filter("Windows 应用程序", &["exe"])
+                .set_title("选择 ChatGPT.exe")
+                .blocking_pick_file()
+            else {
+                return Err(CodexDiscoveryError::SelectionCancelled { diagnostics }.to_string());
+            };
+            let selected_path = PathBuf::try_from(file_path).map_err(|error| {
+                CodexDiscoveryError::InvalidUserSelection {
+                    path: PathBuf::from("<selected file>"),
+                    reason: error.to_string(),
+                }
+                .to_string()
+            })?;
+            let installation =
+                validate_user_selection(selected_path).map_err(|error| error.to_string())?;
+            save_stored_selection(data_directory, &installation)
+                .map_err(|error| error.to_string())?;
+            Ok(installation)
+        }
     }
 }
 
@@ -259,7 +525,7 @@ pub fn app_directories(app: &tauri::App) -> tauri::Result<AppDirectories> {
 
 #[cfg(test)]
 mod tests {
-    use super::WindowsProcessTree;
+    use super::{application_user_model_id, package_family_name, WindowsProcessTree};
     use crate::platform::process_tree::{ProcessTree, StopResult};
     use std::{
         fs,
@@ -275,6 +541,17 @@ mod tests {
 
     const OWNER_HELPER_ENV: &str = "CODEX_TASKBOARD_JOB_OWNER_HELPER";
     const OWNER_MARKER_ENV: &str = "CODEX_TASKBOARD_JOB_OWNER_MARKER";
+
+    #[test]
+    fn official_package_identity_produces_the_stable_family_and_app_id() {
+        let family = package_family_name().unwrap();
+
+        assert_eq!(family, "OpenAI.Codex_2p2nqsd0c76g0");
+        assert_eq!(
+            application_user_model_id(&family).unwrap(),
+            "OpenAI.Codex_2p2nqsd0c76g0!App"
+        );
+    }
 
     fn ping_child(count: &str) -> Child {
         let command = format!("ping -n {count} 127.0.0.1 >NUL");

@@ -573,6 +573,18 @@ fn start_launcher_locked(
     state: &Arc<LauncherState>,
 ) -> Result<LauncherSnapshot, String> {
     discard_stale_windows_record(state);
+    let codex_installation = platform::discover_codex_installation(app, &state.data_directory)?;
+    append_log(
+        state,
+        &format!(
+            "Windows Codex installation discovered from {:?}: {}",
+            codex_installation.source,
+            codex_installation.executable_path.display()
+        ),
+    );
+    update_snapshot(app, state, |snapshot| {
+        snapshot.app_path = Some(codex_installation.executable_path.display().to_string());
+    });
     let resource_directory = app
         .path()
         .resource_dir()
