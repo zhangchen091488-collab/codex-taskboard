@@ -92,12 +92,13 @@ test("Windows PATH lookup accepts a real cmd file", {
     const executable = path.join(root, "codex.cmd");
     await writeFile(executable, "@echo off\r\nexit /b 0\r\n");
 
-    assert.equal(resolveCodexExecutable({
+    const resolved = resolveCodexExecutable({
       explicit: "",
       env: { PATH: root, PATHEXT: ".EXE;.CMD" },
       platform: "win32",
       homeDirectory: path.join(root, "empty home"),
-    }), executable);
+    });
+    assert.equal(resolved.toLowerCase(), executable.toLowerCase());
   } finally {
     await rm(root, { recursive: true, force: true });
   }

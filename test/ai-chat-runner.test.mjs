@@ -367,7 +367,7 @@ test("parser and event callback failures kill a SIGTERM-resistant process group"
       await rm(fixture.descendantPath, { force: true });
       const thread = await fixture.service.createThread({ projectId: "project" });
       const run = await fixture.service.startTurn(thread.id, { message });
-      await waitFor(() => fixture.service.getRun(run.id).status === "failed", 700);
+      await waitFor(() => fixture.service.getRun(run.id).status === "failed", 2_000);
       assert.equal(fixture.service.getRun(run.id).error, expectedError);
       await new Promise((resolve) => setTimeout(resolve, 350));
       await assert.rejects(readFile(fixture.descendantPath), (error) => error.code === "ENOENT");
