@@ -238,6 +238,14 @@ fn append_quoted_argument(
             message: "launch arguments must not contain NUL characters".into(),
         });
     }
+    let requires_quotes = encoded.is_empty()
+        || encoded.iter().any(|character| {
+            *character == b' ' as u16 || *character == b'\t' as u16 || *character == b'"' as u16
+        });
+    if !requires_quotes {
+        command_line.extend(encoded);
+        return Ok(());
+    }
     command_line.push(b'"' as u16);
     let mut backslashes = 0;
     for character in encoded {
@@ -1006,6 +1014,8 @@ mod tests {
             .into_owned();
         assert!(command
             .starts_with(r#""C:\Program Files\Node 22\node.exe" "C:\资源 目录\injector.mjs""#));
+        assert!(command.contains(" --profile-path "));
+        assert!(!command.contains(r#""--profile-path""#));
         assert!(command.contains(r#""C:\Users\示例 User\profile\\""#));
         assert!(command.contains(r#""quote\"inside""#));
 
