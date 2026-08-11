@@ -222,10 +222,18 @@ function startTaskboard({ detached }) {
 async function publishTaskboardRuntime() {
   if (!taskboardRuntimeFile) return;
   const temporaryPath = `${taskboardRuntimeFile}.${process.pid}.tmp`;
+  const endpoint = new URL(taskboardOrigin);
   await mkdir(path.dirname(taskboardRuntimeFile), { recursive: true });
   await writeFile(
     temporaryPath,
-    `${JSON.stringify({ version: 1, pid: process.pid, url: taskboardBaseUrl })}\n`,
+    `${JSON.stringify({
+      version: 2,
+      pid: process.pid,
+      url: taskboardBaseUrl,
+      host: endpoint.hostname,
+      port: Number(endpoint.port),
+      startupNonce: taskboardInstanceToken,
+    })}\n`,
     { mode: 0o600 },
   );
   await chmod(temporaryPath, 0o600);
@@ -237,7 +245,12 @@ async function removeTaskboardRuntime() {
   if (!taskboardRuntimeFile) return;
   try {
     const descriptor = JSON.parse(await readFile(taskboardRuntimeFile, "utf8"));
-    if (descriptor.pid === process.pid && descriptor.url === taskboardBaseUrl) {
+    if (
+      descriptor.version === 2
+      && descriptor.pid === process.pid
+      && descriptor.url === taskboardBaseUrl
+      && descriptor.startupNonce === taskboardInstanceToken
+    ) {
       await unlink(taskboardRuntimeFile);
     }
   } catch (error) {

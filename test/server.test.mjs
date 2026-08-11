@@ -106,6 +106,7 @@ test("launcher mode proves service identity and hides every route behind its ins
   assert.equal(health.response.status, 200);
   assert.equal(health.body.product, "codex-taskboard");
   assert.equal(health.body.version, version);
+  assert.equal(health.body.startupNonce, instanceToken);
   assert.equal(
     health.body.proof,
     createHmac("sha256", instanceSecret).update(challenge).digest("hex"),

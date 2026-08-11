@@ -29,6 +29,10 @@ test("the resident injector authenticates its launcher-managed Taskboard service
   assert.match(source, /await supervisor\.ensure\(\)/);
   assert.match(source, /it will be restarted automatically/);
   assert.match(source, /AbortSignal\.timeout\(1_500\)/);
+  assert.match(source, /version: 2/);
+  assert.match(source, /startupNonce: taskboardInstanceToken/);
+  assert.match(source, /host: endpoint\.hostname/);
+  assert.match(source, /port: Number\(endpoint\.port\)/);
   assert.match(source, /__CODEX_TASKBOARD_FRAME_CAPABILITY__/);
   assert.match(runtimeSource, /request\.frameCapability/);
 });

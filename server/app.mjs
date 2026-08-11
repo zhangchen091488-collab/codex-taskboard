@@ -1723,6 +1723,7 @@ export function createTaskboardServer(options = {}) {
             status: "ok",
             product: "codex-taskboard",
             version: resolved.version,
+            startupNonce: resolved.instanceToken,
             proof: createHmac("sha256", resolved.instanceSecret)
               .update(challenge)
               .digest("hex"),

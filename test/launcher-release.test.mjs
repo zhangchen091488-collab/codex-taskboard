@@ -7,6 +7,10 @@ const platformSource = await readFile(
   new URL("../src-tauri/src/platform/mod.rs", import.meta.url),
   "utf8",
 );
+const launcherRecordSource = await readFile(
+  new URL("../src-tauri/src/launcher_record.rs", import.meta.url),
+  "utf8",
+);
 const macosPlatformSource = await readFile(
   new URL("../src-tauri/src/platform/macos.rs", import.meta.url),
   "utf8",
@@ -113,6 +117,19 @@ test("Windows process-tree lifecycle owns a kill-on-close Job Object", () => {
     launcherSource,
     /CreateJobObjectW|AssignProcessToJobObject|TerminateJobObject|JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/,
   );
+});
+
+test("stale launcher recovery requires a versioned nonce and live loopback health", () => {
+  assert.doesNotMatch(launcherSource, /\/bin\/ps|process_matches_record/);
+  assert.match(launcherSource, /verify_recorded_launcher/);
+  assert.match(launcherSource, /clear_record_if_matches/);
+  assert.match(launcherRecordSource, /LAUNCHER_RECORD_VERSION: u32 = 2/);
+  assert.match(launcherRecordSource, /create_new\(true\)/);
+  assert.match(launcherRecordSource, /options\.mode\(0o600\)/);
+  assert.match(launcherRecordSource, /runtime\.startup_nonce != record\.startup_nonce/);
+  assert.match(launcherRecordSource, /runtime\.host != "127\.0\.0\.1"/);
+  assert.match(launcherRecordSource, /GET \/health HTTP\/1\.1/);
+  assert.doesNotMatch(launcherRecordSource, /Command::new|\/bin\/ps|tasklist|wmic|powershell/i);
 });
 
 test("the launcher waits for the same strict readiness frame emitted by Node", () => {

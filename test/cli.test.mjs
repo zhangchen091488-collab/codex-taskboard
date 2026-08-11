@@ -76,6 +76,36 @@ test("CODEX_TASKBOARD_URL overrides the service origin", async () => {
   assert.equal(requestedUrl.toString(), "https://tasks.example.test/api/projects");
 });
 
+test("runtime descriptors preserve v1 upgrades and accept v2 launcher nonces", async () => {
+  for (const descriptor of [
+    { version: 1, pid: 41, url: "http://127.0.0.1:49101/legacy-token" },
+    {
+      version: 2,
+      pid: 42,
+      url: "http://127.0.0.1:49102/current-token",
+      host: "127.0.0.1",
+      port: 49102,
+      startupNonce: "current-token",
+    },
+  ]) {
+    let requestedUrl;
+    const result = await run(
+      ["project", "list", "--json"],
+      async (url) => {
+        requestedUrl = url;
+        return response({ projects: [] });
+      },
+      {
+        env: { CODEX_TASKBOARD_RUNTIME_FILE: "/runtime/launcher-runtime.json" },
+        readFile: async () => JSON.stringify(descriptor),
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(requestedUrl.origin, new URL(descriptor.url).origin);
+    assert.equal(requestedUrl.pathname, `${new URL(descriptor.url).pathname}/api/projects`);
+  }
+});
+
 test("project create sends id, name, and an absolute workspace path", async () => {
   let requestBody;
   const result = await run(

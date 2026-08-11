@@ -805,7 +805,7 @@ async function resolveTaskboardBaseUrl(env, overrides) {
       details: error instanceof Error ? error.message : String(error),
     });
   }
-  if (descriptor?.version !== 1 || typeof descriptor.url !== "string") {
+  if (![1, 2].includes(descriptor?.version) || typeof descriptor.url !== "string") {
     throw new TaskctlError("The active Taskboard launcher endpoint is invalid", {
       code: "INVALID_RESPONSE",
       exitCode: 4,

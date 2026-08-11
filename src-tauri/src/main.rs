@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+pub mod launcher_record;
 pub mod platform;
 #[cfg(target_os = "macos")]
 mod readiness;
@@ -9,8 +10,6 @@ use platform::{
     process_tree::{ProcessTree, StopResult},
     NativeProcessTree,
 };
-#[cfg(target_os = "macos")]
-use serde::Deserialize;
 use serde::Serialize;
 #[cfg(target_os = "macos")]
 use std::num::NonZeroU32;
@@ -56,17 +55,9 @@ struct LauncherSnapshot {
     child_pid: Option<u32>,
 }
 
-#[cfg(target_os = "macos")]
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct LauncherPidRecord {
-    pid: u32,
-    node_path: PathBuf,
-    injector_path: PathBuf,
-}
-
 struct LauncherChild {
     pid: u32,
+    startup_nonce: String,
     process_tree: NativeProcessTree,
 }
 
@@ -81,7 +72,6 @@ struct LauncherState {
     taskboard_url: Mutex<Option<String>>,
     data_directory: PathBuf,
     log_path: PathBuf,
-    #[cfg(target_os = "macos")]
     pid_record_path: PathBuf,
 }
 
@@ -104,7 +94,6 @@ impl LauncherState {
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
             taskboard_url: Mutex::new(None),
-            #[cfg(target_os = "macos")]
             pid_record_path: data_directory.join("launcher-child.json"),
             data_directory,
             log_path: log_directory.join("codex-taskboard-launcher.log"),
@@ -208,62 +197,59 @@ fn terminate_process_tree(state: &LauncherState, mut process_tree: NativeProcess
 }
 
 #[cfg(target_os = "macos")]
-fn process_matches_record(record: &LauncherPidRecord) -> bool {
-    let output = StdCommand::new("/bin/ps")
-        .args(["-p", &record.pid.to_string(), "-o", "command="])
-        .output();
-    let Ok(output) = output else {
-        return false;
-    };
-    let command = String::from_utf8_lossy(&output.stdout);
-    let command = command.trim_start();
-    command.starts_with(&*record.node_path.to_string_lossy())
-        && command.contains(&*record.injector_path.to_string_lossy())
-}
-
-#[cfg(target_os = "macos")]
 fn stop_recorded_child(state: &LauncherState) {
-    let record = fs::read_to_string(&state.pid_record_path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<LauncherPidRecord>(&content).ok());
-    if let Some(record) = record {
-        if process_matches_record(&record) {
-            match process_tree_for_pid(record.pid) {
+    match launcher_record::read_record(&state.pid_record_path) {
+        Ok(Some(record)) => match launcher_record::verify_recorded_launcher(
+            &record,
+            &state.data_directory.join("launcher-runtime.json"),
+        ) {
+            Ok(true) => match process_tree_for_pid(record.pid) {
                 Ok(process_tree) => terminate_process_tree(state, process_tree),
                 Err(error) => append_log(
                     state,
-                    &format!("Recorded process tree could not be registered: {error}"),
+                    &format!("Verified process tree could not be registered: {error}"),
                 ),
-            }
-        }
+            },
+            Ok(false) => append_log(
+                state,
+                "Stale launcher record was not trusted because its runtime nonce was not live",
+            ),
+            Err(error) => append_log(
+                state,
+                &format!("Launcher record verification failed safely: {error}"),
+            ),
+        },
+        Ok(None) => {}
+        Err(error) => append_log(
+            state,
+            &format!("Legacy or invalid launcher record was ignored safely: {error}"),
+        ),
     }
-    let _ = fs::remove_file(&state.pid_record_path);
+    if let Err(error) = launcher_record::remove_record(&state.pid_record_path) {
+        append_log(state, &error);
+    }
+}
+
+fn clear_pid_record(state: &LauncherState, pid: u32, startup_nonce: &str) {
+    if let Err(error) =
+        launcher_record::clear_record_if_matches(&state.pid_record_path, pid, startup_nonce)
+    {
+        append_log(state, &format!("Launcher record cleanup failed: {error}"));
+    }
 }
 
 #[cfg(target_os = "macos")]
-fn write_pid_record(
-    state: &LauncherState,
-    pid: u32,
-    node_path: PathBuf,
-    injector_path: PathBuf,
-) -> Result<(), String> {
-    let record = LauncherPidRecord {
-        pid,
-        node_path,
-        injector_path,
-    };
-    let content = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
-    fs::write(&state.pid_record_path, content).map_err(|error| error.to_string())
+fn write_pid_record(state: &LauncherState, pid: u32, startup_nonce: &str) -> Result<(), String> {
+    launcher_record::write_record(&state.pid_record_path, pid, startup_nonce)
 }
 
-#[cfg(target_os = "macos")]
-fn clear_pid_record(state: &LauncherState, pid: u32) {
-    let matches = fs::read_to_string(&state.pid_record_path)
-        .ok()
-        .and_then(|content| serde_json::from_str::<LauncherPidRecord>(&content).ok())
-        .is_some_and(|record| record.pid == pid);
-    if matches {
-        let _ = fs::remove_file(&state.pid_record_path);
+#[cfg(target_os = "windows")]
+fn discard_stale_windows_record(state: &LauncherState) {
+    if let Err(error) = launcher_record::remove_record(&state.pid_record_path) {
+        append_log(
+            state,
+            &format!("Stale Windows launcher record cleanup failed: {error}"),
+        );
     }
 }
 
@@ -273,10 +259,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     if let Some(child) = state.child.lock().unwrap().take() {
         append_log(state, &format!("Stopping launcher child {}", child.pid));
         terminate_process_tree(state, child.process_tree);
-        #[cfg(target_os = "macos")]
-        {
-            clear_pid_record(state, child.pid);
-        }
+        clear_pid_record(state, child.pid, &child.startup_nonce);
     }
     *state.taskboard_url.lock().unwrap() = None;
     update_snapshot(app, state, |snapshot| {
@@ -458,7 +441,7 @@ fn start_launcher_locked(
             return Err(error);
         }
     };
-    if let Err(error) = write_pid_record(state, pid, node_path, injector_path) {
+    if let Err(error) = write_pid_record(state, pid, &instance_token) {
         force_process_tree(state, &mut process_tree);
         let _ = child.wait();
         return Err(error);
@@ -486,7 +469,7 @@ fn start_launcher_locked(
                 append_log(state, &format!("Launcher readiness failed: {error}"));
                 force_process_tree(state, &mut process_tree);
                 let _ = child.wait();
-                clear_pid_record(state, pid);
+                clear_pid_record(state, pid, &instance_token);
                 return Err(error);
             }
         };
@@ -510,7 +493,11 @@ fn start_launcher_locked(
             }
         }
     });
-    *state.child.lock().unwrap() = Some(LauncherChild { pid, process_tree });
+    *state.child.lock().unwrap() = Some(LauncherChild {
+        pid,
+        startup_nonce: instance_token.clone(),
+        process_tree,
+    });
     let snapshot = update_snapshot(app, state, |snapshot| {
         snapshot.child_pid = Some(pid);
     });
@@ -524,6 +511,7 @@ fn start_launcher_locked(
 
     let event_app = app.clone();
     let event_state = state.clone();
+    let event_startup_nonce = instance_token.clone();
     thread::spawn(move || {
         let status = child.wait();
         append_log(
@@ -540,7 +528,7 @@ fn start_launcher_locked(
         let managed_child = current_child.take().unwrap();
         drop(current_child);
         terminate_process_tree(&event_state, managed_child.process_tree);
-        clear_pid_record(&event_state, pid);
+        clear_pid_record(&event_state, pid, &event_startup_nonce);
         let intentional = event_state.intentional_stop.load(Ordering::SeqCst);
         update_snapshot(&event_app, &event_state, |snapshot| {
             snapshot.child_pid = None;
@@ -584,6 +572,7 @@ fn start_launcher_locked(
     app: &AppHandle,
     state: &Arc<LauncherState>,
 ) -> Result<LauncherSnapshot, String> {
+    discard_stale_windows_record(state);
     let resource_directory = app
         .path()
         .resource_dir()
