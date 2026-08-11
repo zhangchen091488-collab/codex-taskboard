@@ -258,14 +258,13 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
   assert.doesNotMatch(checkWorkflow, /toolchain: 1\.88\.0/);
 });
 
-test("Windows taskctl fixture observes an intentional native exit without losing cmd resolution", () => {
-  assert.match(windowsTaskctlFixture, /PSNativeCommandUseErrorActionPreference = \$false/);
-  assert.match(windowsTaskctlFixture, /Join-Path \$env:SystemRoot "System32"/);
-  assert.match(
-    windowsTaskctlFixture,
-    /PSNativeCommandUseErrorActionPreference = \$savedNativePreference/,
-  );
-  assert.doesNotMatch(windowsTaskctlFixture, /\$env:PATH = ""/);
+test("Windows taskctl fixture captures an intentional exit through an absolute cmd harness", () => {
+  assert.match(windowsTaskctlFixture, /\$env:PATH = ""/);
+  assert.match(windowsTaskctlFixture, /\$startInfo\.FileName = \$env:ComSpec/);
+  assert.match(windowsTaskctlFixture, /RedirectStandardOutput = \$true/);
+  assert.match(windowsTaskctlFixture, /\$wrapperExitCode = \$process\.ExitCode/);
+  assert.match(windowsTaskctlFixture, /TASKCTL_TEST_UNICODE_ARGUMENT = "中文参数"/);
+  assert.doesNotMatch(windowsTaskctlFixture, /PSNativeCommandUseErrorActionPreference/);
 });
 
 test("the launcher minimum system version matches the current Codex client requirement", () => {

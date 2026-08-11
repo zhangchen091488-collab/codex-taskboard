@@ -22,19 +22,14 @@ $fixtureNode = Join-Path $fixtureRoot "node.exe"
 $fixtureWrapper = Join-Path $fixtureBin "taskctl.cmd"
 $fixtureScript = Join-Path $fixtureCli "taskctl.mjs"
 $fixtureAppData = Join-Path $fixtureRoot "用户 Data with spaces"
+$fixtureHarness = Join-Path $fixtureRoot "invoke-wrapper.cmd"
 
 $savedPath = $env:PATH
 $savedAppData = $env:APPDATA
 $savedDataDirectory = $env:CODEX_TASKBOARD_DATA_DIR
 $savedRuntimeFile = $env:CODEX_TASKBOARD_RUNTIME_FILE
-$nativePreference = Get-Variable `
-  -Name PSNativeCommandUseErrorActionPreference `
-  -ErrorAction SilentlyContinue
-$savedNativePreference = if ($null -ne $nativePreference) {
-  $nativePreference.Value
-} else {
-  $null
-}
+$savedSpaceArgument = $env:TASKCTL_TEST_SPACE_ARGUMENT
+$savedUnicodeArgument = $env:TASKCTL_TEST_UNICODE_ARGUMENT
 try {
   New-Item -ItemType Directory -Force $fixtureBin, $fixtureCli | Out-Null
   Copy-Item $sourceNode $fixtureNode
@@ -48,20 +43,37 @@ console.log(JSON.stringify({
 }));
 process.exit(Number(process.argv[2]));
 '@ | Set-Content -Encoding utf8 $fixtureScript
+  @'
+@echo off
+call "%~dp0bin\taskctl.cmd" "37" "%TASKCTL_TEST_SPACE_ARGUMENT%" "%TASKCTL_TEST_UNICODE_ARGUMENT%"
+exit /b %ERRORLEVEL%
+'@ | Set-Content -Encoding ascii $fixtureHarness
 
-  $env:PATH = Join-Path $env:SystemRoot "System32"
+  $env:PATH = ""
   $env:APPDATA = $fixtureAppData
   $env:CODEX_TASKBOARD_DATA_DIR = $null
   $env:CODEX_TASKBOARD_RUNTIME_FILE = $null
-  if ($null -ne $nativePreference) {
-    $PSNativeCommandUseErrorActionPreference = $false
-  }
-  $rawOutput = & $fixtureWrapper "37" "argument with spaces" "中文参数"
-  $wrapperExitCode = $LASTEXITCODE
+  $env:TASKCTL_TEST_SPACE_ARGUMENT = "argument with spaces"
+  $env:TASKCTL_TEST_UNICODE_ARGUMENT = "中文参数"
+
+  $startInfo = [Diagnostics.ProcessStartInfo]::new()
+  $startInfo.FileName = $env:ComSpec
+  $startInfo.Arguments = "/d /s /c `"`"$fixtureHarness`"`""
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $startInfo.RedirectStandardOutput = $true
+  $startInfo.RedirectStandardError = $true
+  $process = [Diagnostics.Process]::new()
+  $process.StartInfo = $startInfo
+  if (-not $process.Start()) { throw "Could not start the taskctl wrapper harness" }
+  $rawOutput = $process.StandardOutput.ReadToEnd()
+  $standardError = $process.StandardError.ReadToEnd()
+  $process.WaitForExit()
+  $wrapperExitCode = $process.ExitCode
   $result = $rawOutput | ConvertFrom-Json
 
   if ($wrapperExitCode -ne 37) {
-    throw "taskctl.cmd did not preserve exit code 37: $wrapperExitCode"
+    throw "taskctl.cmd did not preserve exit code 37: $wrapperExitCode; stderr: $standardError"
   }
   if ($result.argv.Count -ne 3 -or
       $result.argv[0] -ne "37" -or
@@ -89,9 +101,8 @@ process.exit(Number(process.argv[2]));
   $env:APPDATA = $savedAppData
   $env:CODEX_TASKBOARD_DATA_DIR = $savedDataDirectory
   $env:CODEX_TASKBOARD_RUNTIME_FILE = $savedRuntimeFile
-  if ($null -ne $nativePreference) {
-    $PSNativeCommandUseErrorActionPreference = $savedNativePreference
-  }
+  $env:TASKCTL_TEST_SPACE_ARGUMENT = $savedSpaceArgument
+  $env:TASKCTL_TEST_UNICODE_ARGUMENT = $savedUnicodeArgument
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $fixtureRoot
 }
 
