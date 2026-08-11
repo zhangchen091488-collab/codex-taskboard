@@ -5,10 +5,13 @@ pub mod platform;
 mod readiness;
 
 #[cfg(target_os = "macos")]
+use platform::{
+    process_tree::{ProcessTree, StopResult},
+    NativeProcessTree,
+};
+#[cfg(target_os = "macos")]
 use serde::Deserialize;
 use serde::Serialize;
-#[cfg(target_os = "macos")]
-use std::os::unix::process::CommandExt;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -21,10 +24,11 @@ use std::{
 #[cfg(target_os = "macos")]
 use std::{
     io::{BufRead, BufReader},
+    num::NonZeroU32,
     process::{Command as StdCommand, Stdio},
     sync::mpsc,
     thread,
-    time::{Duration, Instant},
+    time::Duration,
 };
 use tauri::{
     menu::{Menu, MenuItem},
@@ -59,8 +63,17 @@ struct LauncherPidRecord {
     injector_path: PathBuf,
 }
 
+#[cfg(target_os = "macos")]
+struct LauncherChild {
+    pid: u32,
+    process_tree: NativeProcessTree,
+}
+
+#[cfg(target_os = "windows")]
+type LauncherChild = u32;
+
 struct LauncherState {
-    child: Mutex<Option<u32>>,
+    child: Mutex<Option<LauncherChild>>,
     snapshot: Mutex<LauncherSnapshot>,
     intentional_stop: AtomicBool,
     update_flow_in_progress: AtomicBool,
@@ -161,34 +174,40 @@ fn find_codex_app(home_directory: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "macos")]
-fn send_process_group_signal(pid: u32, signal: i32) {
-    unsafe {
-        if libc::kill(-(pid as i32), signal) != 0 {
-            libc::kill(pid as i32, signal);
+fn process_tree_for_pid(pid: u32) -> Result<NativeProcessTree, String> {
+    let root_pid =
+        NonZeroU32::new(pid).ok_or_else(|| "Process root PID must be non-zero".to_string())?;
+    let mut process_tree = NativeProcessTree::create().map_err(|error| error.to_string())?;
+    process_tree
+        .register_root(root_pid)
+        .map_err(|error| error.to_string())?;
+    Ok(process_tree)
+}
+
+#[cfg(target_os = "macos")]
+fn force_process_tree(state: &LauncherState, process_tree: &mut NativeProcessTree) {
+    match process_tree.force_stop(Duration::from_secs(1)) {
+        Ok(StopResult::TimedOut) => append_log(state, "Process tree force stop timed out"),
+        Err(error) => append_log(state, &format!("Process tree force stop failed: {error}")),
+        Ok(_) => {}
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn terminate_process_tree(state: &LauncherState, mut process_tree: NativeProcessTree) {
+    match process_tree.stop_gracefully(STOP_TIMEOUT) {
+        Ok(StopResult::TimedOut) => force_process_tree(state, &mut process_tree),
+        Err(error) => {
+            append_log(
+                state,
+                &format!("Process tree graceful stop failed: {error}"),
+            );
+            force_process_tree(state, &mut process_tree);
         }
+        Ok(_) => {}
     }
-}
-
-#[cfg(target_os = "macos")]
-fn process_group_is_running(pid: u32) -> bool {
-    unsafe { libc::kill(-(pid as i32), 0) == 0 }
-}
-
-#[cfg(target_os = "macos")]
-fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
-    let deadline = Instant::now() + timeout;
-    while process_group_is_running(pid) && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(100));
-    }
-    !process_group_is_running(pid)
-}
-
-#[cfg(target_os = "macos")]
-fn terminate_process_group(pid: u32) {
-    send_process_group_signal(pid, libc::SIGTERM);
-    if !wait_for_process_group_exit(pid, STOP_TIMEOUT) {
-        send_process_group_signal(pid, libc::SIGKILL);
-        let _ = wait_for_process_group_exit(pid, Duration::from_secs(1));
+    if let Err(error) = process_tree.release() {
+        append_log(state, &format!("Process tree release failed: {error}"));
     }
 }
 
@@ -213,7 +232,13 @@ fn stop_recorded_child(state: &LauncherState) {
         .and_then(|content| serde_json::from_str::<LauncherPidRecord>(&content).ok());
     if let Some(record) = record {
         if process_matches_record(&record) {
-            terminate_process_group(record.pid);
+            match process_tree_for_pid(record.pid) {
+                Ok(process_tree) => terminate_process_tree(state, process_tree),
+                Err(error) => append_log(
+                    state,
+                    &format!("Recorded process tree could not be registered: {error}"),
+                ),
+            }
         }
     }
     let _ = fs::remove_file(&state.pid_record_path);
@@ -249,18 +274,21 @@ fn clear_pid_record(state: &LauncherState, pid: u32) {
 fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     state.generation.fetch_add(1, Ordering::SeqCst);
     state.intentional_stop.store(true, Ordering::SeqCst);
-    if let Some(pid) = state.child.lock().unwrap().take() {
-        append_log(state, &format!("Stopping launcher child {pid}"));
+    if let Some(child) = state.child.lock().unwrap().take() {
         #[cfg(target_os = "macos")]
         {
-            terminate_process_group(pid);
-            clear_pid_record(state, pid);
+            append_log(state, &format!("Stopping launcher child {}", child.pid));
+            terminate_process_tree(state, child.process_tree);
+            clear_pid_record(state, child.pid);
         }
         #[cfg(target_os = "windows")]
-        append_log(
-            state,
-            "Windows child state exists before the process lifecycle backend is implemented",
-        );
+        {
+            append_log(state, &format!("Stopping launcher child {child}"));
+            append_log(
+                state,
+                "Windows child state exists before the process lifecycle backend is implemented",
+            );
+        }
     }
     *state.taskboard_url.lock().unwrap() = None;
     update_snapshot(app, state, |snapshot| {
@@ -429,13 +457,21 @@ fn start_launcher_locked(
         .env("HOST", "127.0.0.1")
         .env("PATH", path_value)
         .current_dir(&app_root)
-        .process_group(0)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    platform::configure_process_tree_command(&mut command);
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let pid = child.id();
+    let mut process_tree = match process_tree_for_pid(pid) {
+        Ok(process_tree) => process_tree,
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+    };
     if let Err(error) = write_pid_record(state, pid, node_path, injector_path) {
-        send_process_group_signal(pid, libc::SIGKILL);
+        force_process_tree(state, &mut process_tree);
         let _ = child.wait();
         return Err(error);
     }
@@ -460,7 +496,7 @@ fn start_launcher_locked(
             Ok(listening) => listening,
             Err(error) => {
                 append_log(state, &format!("Launcher readiness failed: {error}"));
-                send_process_group_signal(pid, libc::SIGKILL);
+                force_process_tree(state, &mut process_tree);
                 let _ = child.wait();
                 clear_pid_record(state, pid);
                 return Err(error);
@@ -486,7 +522,7 @@ fn start_launcher_locked(
             }
         }
     });
-    *state.child.lock().unwrap() = Some(pid);
+    *state.child.lock().unwrap() = Some(LauncherChild { pid, process_tree });
     let snapshot = update_snapshot(app, state, |snapshot| {
         snapshot.child_pid = Some(pid);
     });
@@ -506,16 +542,16 @@ fn start_launcher_locked(
             &event_state,
             &format!("Launcher child {pid} exited: {status:?}"),
         );
-        terminate_process_group(pid);
         if event_state.generation.load(Ordering::SeqCst) != generation {
             return;
         }
         let mut current_child = event_state.child.lock().unwrap();
-        if *current_child != Some(pid) {
+        if current_child.as_ref().map(|child| child.pid) != Some(pid) {
             return;
         }
-        *current_child = None;
+        let managed_child = current_child.take().unwrap();
         drop(current_child);
+        terminate_process_tree(&event_state, managed_child.process_tree);
         clear_pid_record(&event_state, pid);
         let intentional = event_state.intentional_stop.load(Ordering::SeqCst);
         update_snapshot(&event_app, &event_state, |snapshot| {

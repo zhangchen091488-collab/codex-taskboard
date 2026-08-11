@@ -28,7 +28,10 @@ mod macos;
 mod windows;
 
 #[cfg(target_os = "macos")]
-pub use macos::{app_directories, configure_app};
+pub use macos::{
+    app_directories, configure_app, configure_process_tree_command,
+    MacProcessTree as NativeProcessTree,
+};
 #[cfg(target_os = "windows")]
 pub use windows::{app_directories, configure_app};
 

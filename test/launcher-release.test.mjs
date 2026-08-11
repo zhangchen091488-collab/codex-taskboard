@@ -34,12 +34,10 @@ const checkWorkflow = await readFile(new URL("../.github/workflows/check.yml", i
 test("the launcher keeps OS-specific app setup behind one platform boundary", () => {
   assert.match(launcherSource, /platform::configure_app\(app\)/);
   assert.doesNotMatch(launcherSource, /ActivationPolicy/);
-  assert.match(
-    launcherSource,
-    /#\[cfg\(target_os = "macos"\)\]\nuse std::os::unix::process::CommandExt;/,
-  );
+  assert.doesNotMatch(launcherSource, /std::os::unix::process::CommandExt/);
   assert.match(platformSource, /#\[cfg\(target_os = "macos"\)\]/);
   assert.match(platformSource, /#\[cfg\(target_os = "windows"\)\]/);
+  assert.match(macosPlatformSource, /os::unix::process::CommandExt/);
   assert.match(macosPlatformSource, /ActivationPolicy::Accessory/);
   assert.doesNotMatch(windowsPlatformSource, /ActivationPolicy/);
   assert.match(
@@ -88,6 +86,17 @@ test("the macOS launcher uses one instance, serialized lifecycle changes, and a 
   assert.match(launcherSource, /"--cdp-pipe"/);
   assert.doesNotMatch(launcherSource, /cdp_port/);
   assert.doesNotMatch(launcherSource, /const LAUNCHER_PORT/);
+});
+
+test("macOS process-group lifecycle stays behind the ProcessTree implementation", () => {
+  assert.match(macosPlatformSource, /impl ProcessTree for MacProcessTree/);
+  assert.match(macosPlatformSource, /command\.process_group\(0\)/);
+  assert.match(macosPlatformSource, /libc::SIGTERM/);
+  assert.match(macosPlatformSource, /libc::SIGKILL/);
+  assert.match(macosPlatformSource, /Duration::from_millis\(100\)/);
+  assert.match(launcherSource, /stop_gracefully\(STOP_TIMEOUT\)/);
+  assert.match(launcherSource, /force_stop\(Duration::from_secs\(1\)\)/);
+  assert.doesNotMatch(launcherSource, /libc::kill|terminate_process_group|\.process_group\(0\)/);
 });
 
 test("the launcher waits for the same strict readiness frame emitted by Node", () => {
