@@ -30,11 +30,11 @@ function String-Property([AllowNull()]$InputObject, [string]$Name) {
   if ($null -eq $InputObject) {
     return $null
   }
-  $property = ([System.Management.Automation.PSObject]::AsPSObject($InputObject)).Properties[$Name]
-  if ($null -eq $property -or $null -eq $property.Value) {
+  $value = $InputObject | Select-Object -ExpandProperty $Name -ErrorAction SilentlyContinue
+  if ($null -eq $value) {
     return $null
   }
-  return [string]$property.Value
+  return [string]$value
 }
 
 function Get-TaskboardInstallEntries {
