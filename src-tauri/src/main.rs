@@ -13,8 +13,6 @@ use platform::{
 use serde::Serialize;
 #[cfg(target_os = "macos")]
 use std::num::NonZeroU32;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use std::time::Duration;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -29,8 +27,9 @@ use std::{
     io::{BufRead, BufReader},
     process::{Command as StdCommand, Stdio},
     sync::mpsc,
-    thread,
 };
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::{thread, time::Duration};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
@@ -38,7 +37,7 @@ use tauri::{
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::{Update, UpdaterExt};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use uuid::Uuid;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -573,6 +572,9 @@ fn start_launcher_locked(
     app: &AppHandle,
     state: &Arc<LauncherState>,
 ) -> Result<LauncherSnapshot, String> {
+    if state.child.lock().unwrap().is_some() {
+        return Ok(state.snapshot.lock().unwrap().clone());
+    }
     discard_stale_windows_record(state);
     let codex_installation = platform::discover_codex_installation(app, &state.data_directory)?;
     append_log(
@@ -591,15 +593,94 @@ fn start_launcher_locked(
         .resource_dir()
         .map_err(|error| error.to_string())?;
     let roaming_data_directory = app.path().data_dir().map_err(|error| error.to_string())?;
-    let _codex_profiles =
+    let codex_profiles =
         platform::codex_profile_directories(&state.data_directory, &roaming_data_directory);
-    let inherited_path = std::env::var_os("PATH");
-    platform::launcher_path(&resource_directory, inherited_path.as_deref())
-        .map_err(|error| format!("无法构造任务面板 PATH：{error}"))?;
-    let data_directory = state.data_directory.display();
-    Err(format!(
-        "Windows launcher backend is not implemented yet (data directory: {data_directory})"
-    ))
+    let app_root = resource_directory.join("app");
+    let injector_path = app_root.join("scripts/codex-injector.mjs");
+    let node_path = std::env::current_exe()
+        .map_err(|error| error.to_string())?
+        .parent()
+        .ok_or_else(|| "无法定位 App 可执行文件目录".to_string())?
+        .join("node.exe");
+    let launch_description = platform::codex_launch_description(
+        node_path,
+        injector_path,
+        app_root,
+        codex_installation.executable_path.clone(),
+        &codex_profiles,
+    );
+
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.intentional_stop.store(false, Ordering::SeqCst);
+    let startup_nonce = Uuid::new_v4().to_string();
+    update_snapshot(app, state, |snapshot| {
+        snapshot.phase = "starting".into();
+        snapshot.message = "正在启动独立 Codex Windows 实例…".into();
+    });
+
+    let mut process_tree = NativeProcessTree::create().map_err(|error| error.to_string())?;
+    let launched = process_tree
+        .spawn_suspended(&launch_description)
+        .map_err(|error| error.to_string())?;
+    let pid = launched.pid();
+    *state.child.lock().unwrap() = Some(LauncherChild {
+        pid,
+        startup_nonce: startup_nonce.clone(),
+        process_tree,
+    });
+    let snapshot = update_snapshot(app, state, |snapshot| {
+        snapshot.phase = "starting".into();
+        snapshot.message = "独立 Codex 已启动，等待调试通道接入…".into();
+        snapshot.child_pid = Some(pid);
+    });
+    append_log(
+        state,
+        &format!("Started suspended Windows launcher child {pid} inside its Job Object"),
+    );
+
+    let event_app = app.clone();
+    let event_state = state.clone();
+    thread::spawn(move || {
+        let exit = launched.wait();
+        append_log(
+            &event_state,
+            &format!("Windows launcher child {pid} exited: {exit:?}"),
+        );
+        if event_state.generation.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        let mut current_child = event_state.child.lock().unwrap();
+        if current_child.as_ref().map(|child| child.pid) != Some(pid) {
+            return;
+        }
+        let managed_child = current_child.take().unwrap();
+        drop(current_child);
+        terminate_process_tree(&event_state, managed_child.process_tree);
+        clear_pid_record(&event_state, pid, &startup_nonce);
+        let launch_failed = !matches!(&exit, Ok(0));
+        update_snapshot(&event_app, &event_state, |snapshot| {
+            snapshot.child_pid = None;
+            match &exit {
+                Ok(0) => {
+                    snapshot.phase = "stopped".into();
+                    snapshot.message = "Codex Windows 实例已退出。".into();
+                }
+                Ok(_) | Err(_) => {
+                    snapshot.phase = "error".into();
+                    snapshot.message =
+                        "Codex Windows 实例启动失败；请检查安装后从托盘重试。".into();
+                }
+            }
+        });
+        if launch_failed {
+            show_error_dialog(
+                &event_app,
+                "Codex Taskboard 启动失败",
+                "无法启动独立的 Codex Windows 实例。请确认 ChatGPT 已安装，然后从托盘重新启动 Codex。",
+            );
+        }
+    });
+    Ok(snapshot)
 }
 
 fn start_launcher(app: &AppHandle, state: &Arc<LauncherState>) -> Result<LauncherSnapshot, String> {

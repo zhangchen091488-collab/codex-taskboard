@@ -19,6 +19,7 @@ const windowsPlatformSource = await readFile(
   new URL("../src-tauri/src/platform/windows.rs", import.meta.url),
   "utf8",
 );
+const [windowsPlatformProductionSource] = windowsPlatformSource.split("#[cfg(test)]");
 const codexInstallationSource = await readFile(
   new URL("../src-tauri/src/platform/codex_installation.rs", import.meta.url),
   "utf8",
@@ -49,10 +50,9 @@ test("the launcher keeps OS-specific app setup behind one platform boundary", ()
   assert.match(macosPlatformSource, /os::unix::process::CommandExt/);
   assert.match(macosPlatformSource, /ActivationPolicy::Accessory/);
   assert.doesNotMatch(windowsPlatformSource, /ActivationPolicy/);
-  assert.match(
-    launcherSource,
-    /#\[cfg\(target_os = "windows"\)\]\nfn start_launcher_locked[\s\S]*Windows launcher backend is not implemented yet/,
-  );
+  assert.match(launcherSource, /platform::codex_launch_description/);
+  assert.match(launcherSource, /\.spawn_suspended\(&launch_description\)/);
+  assert.doesNotMatch(launcherSource, /Windows launcher backend is not implemented yet/);
 });
 
 test("the launcher uses standard app directories without abandoning existing macOS data", () => {
@@ -116,6 +116,15 @@ test("Windows process-tree lifecycle owns a kill-on-close Job Object", () => {
   assert.match(windowsPlatformSource, /QueryInformationJobObject/);
   assert.match(windowsPlatformSource, /TerminateJobObject/);
   assert.match(windowsPlatformSource, /OwnedHandle/);
+  assert.match(windowsPlatformSource, /CreateProcessW/);
+  assert.match(windowsPlatformSource, /CREATE_SUSPENDED/);
+  assert.match(windowsPlatformSource, /CREATE_UNICODE_ENVIRONMENT/);
+  assert.match(windowsPlatformSource, /CREATE_NO_WINDOW/);
+  assert.match(
+    windowsPlatformSource,
+    /AssignProcessToJobObject[\s\S]*ResumeThread/,
+  );
+  assert.match(windowsPlatformSource, /binherithandles|,\s*0,\s*CREATE_SUSPENDED/i);
   assert.match(platformSource, /WindowsProcessTree as NativeProcessTree/);
   assert.match(launcherSource, /process_tree: NativeProcessTree/);
   assert.doesNotMatch(
@@ -135,7 +144,7 @@ test("Windows Codex discovery uses package metadata and a recoverable executable
   assert.match(windowsPlatformSource, /blocking_pick_file/);
   assert.match(windowsPlatformSource, /save_stored_selection/);
   assert.match(launcherSource, /platform::discover_codex_installation/);
-  assert.doesNotMatch(windowsPlatformSource, /Program Files[\\/]WindowsApps/);
+  assert.doesNotMatch(windowsPlatformProductionSource, /Program Files[\\/]WindowsApps/);
   assert.doesNotMatch(codexInstallationProductionSource, /OpenAI\.Codex_[0-9]/);
   assert.doesNotMatch(windowsPlatformSource, /(?:powershell|Get-AppxPackage|wmic)/i);
 });

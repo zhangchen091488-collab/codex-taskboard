@@ -51,8 +51,8 @@ pub use macos::{
 };
 #[cfg(target_os = "windows")]
 pub use windows::{
-    app_directories, configure_app, discover_codex_installation,
-    WindowsProcessTree as NativeProcessTree,
+    app_directories, codex_launch_description, configure_app, discover_codex_installation,
+    WindowsLaunchDescription, WindowsProcessTree as NativeProcessTree, WindowsProcessWaiter,
 };
 
 #[cfg(test)]

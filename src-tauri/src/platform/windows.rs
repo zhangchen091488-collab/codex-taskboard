@@ -1,8 +1,9 @@
 use std::{
-    ffi::{c_void, OsString},
+    env,
+    ffi::{c_void, OsStr, OsString},
     num::NonZeroU32,
     os::windows::{
-        ffi::OsStringExt,
+        ffi::{OsStrExt, OsStringExt},
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
     },
     path::{Path, PathBuf},
@@ -15,7 +16,7 @@ use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use windows_sys::core::PWSTR;
 use windows_sys::Win32::{
-    Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HANDLE},
+    Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0},
     Storage::Packaging::Appx::{
         FindPackagesByPackageFamily, FormatApplicationUserModelId, GetPackagePathByFullName,
         PackageFamilyNameFromId, PACKAGE_FILTER_HEAD, PACKAGE_ID,
@@ -27,7 +28,12 @@ use windows_sys::Win32::{
             TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
             JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         },
-        Threading::{OpenProcess, PROCESS_SET_QUOTA, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE},
+        Threading::{
+            CreateProcessW, GetExitCodeProcess, OpenProcess, ResumeThread, TerminateProcess,
+            WaitForSingleObject, CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
+            INFINITE, PROCESS_INFORMATION, PROCESS_SET_QUOTA, PROCESS_SYNCHRONIZE,
+            PROCESS_TERMINATE, STARTUPINFOW,
+        },
     },
 };
 
@@ -39,7 +45,7 @@ use super::{
         CODEX_PACKAGE_NAME, CODEX_PACKAGE_PUBLISHER,
     },
     process_tree::{ProcessTree, ProcessTreeError, ProcessTreeState, StopResult},
-    AppDirectories,
+    AppDirectories, CodexProfileDirectories,
 };
 
 const FORCE_EXIT_CODE: u32 = 1;
@@ -49,6 +55,163 @@ pub struct WindowsProcessTree {
     state: ProcessTreeState,
     job: OwnedHandle,
     root_process: Option<OwnedHandle>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WindowsLaunchDescription {
+    pub executable_path: PathBuf,
+    pub arguments: Vec<OsString>,
+    pub current_directory: PathBuf,
+    pub environment: Vec<(OsString, OsString)>,
+}
+
+#[derive(Debug)]
+pub struct WindowsProcessWaiter {
+    pid: u32,
+    process: OwnedHandle,
+}
+
+impl WindowsProcessWaiter {
+    pub fn pid(&self) -> u32 {
+        self.pid
+    }
+
+    pub fn wait(self) -> Result<u32, ProcessTreeError> {
+        if unsafe { WaitForSingleObject(raw_handle(&self.process), INFINITE) } != WAIT_OBJECT_0 {
+            return Err(last_platform_error(
+                "wait_root",
+                "could not wait for the launcher process",
+            ));
+        }
+        let mut exit_code = 0;
+        if unsafe { GetExitCodeProcess(raw_handle(&self.process), &mut exit_code) } == 0 {
+            return Err(last_platform_error(
+                "read_root_exit",
+                "could not read the launcher process exit code",
+            ));
+        }
+        Ok(exit_code)
+    }
+}
+
+fn sanitized_launch_environment(
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> Vec<(OsString, OsString)> {
+    environment
+        .into_iter()
+        .filter(|(name, _)| {
+            !name
+                .to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("CODEX_TASKBOARD_")
+        })
+        .collect()
+}
+
+pub fn codex_launch_description(
+    node_path: PathBuf,
+    injector_path: PathBuf,
+    app_root: PathBuf,
+    codex_executable_path: PathBuf,
+    profiles: &CodexProfileDirectories,
+) -> WindowsLaunchDescription {
+    WindowsLaunchDescription {
+        executable_path: node_path,
+        arguments: vec![
+            injector_path.into_os_string(),
+            "--launch-only".into(),
+            "--app-path".into(),
+            codex_executable_path.into_os_string(),
+            "--profile-path".into(),
+            profiles.independent.clone().into_os_string(),
+            "--source-profile-path".into(),
+            profiles.source.clone().into_os_string(),
+        ],
+        current_directory: app_root,
+        environment: sanitized_launch_environment(env::vars_os()),
+    }
+}
+
+fn wide_null_os(value: &OsStr) -> Result<Vec<u16>, ProcessTreeError> {
+    let mut encoded = value.encode_wide().collect::<Vec<_>>();
+    if encoded.contains(&0) {
+        return Err(ProcessTreeError::Platform {
+            operation: "build_launch",
+            code: None,
+            message: "launch values must not contain NUL characters".into(),
+        });
+    }
+    encoded.push(0);
+    Ok(encoded)
+}
+
+fn append_quoted_argument(
+    command_line: &mut Vec<u16>,
+    value: &OsStr,
+) -> Result<(), ProcessTreeError> {
+    let encoded = value.encode_wide().collect::<Vec<_>>();
+    if encoded.contains(&0) {
+        return Err(ProcessTreeError::Platform {
+            operation: "build_launch",
+            code: None,
+            message: "launch arguments must not contain NUL characters".into(),
+        });
+    }
+    command_line.push(b'"' as u16);
+    let mut backslashes = 0;
+    for character in encoded {
+        if character == b'\\' as u16 {
+            backslashes += 1;
+            continue;
+        }
+        if character == b'"' as u16 {
+            command_line.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2 + 1));
+        } else {
+            command_line.extend(std::iter::repeat_n(b'\\' as u16, backslashes));
+        }
+        backslashes = 0;
+        command_line.push(character);
+    }
+    command_line.extend(std::iter::repeat_n(b'\\' as u16, backslashes * 2));
+    command_line.push(b'"' as u16);
+    Ok(())
+}
+
+fn command_line(description: &WindowsLaunchDescription) -> Result<Vec<u16>, ProcessTreeError> {
+    let mut command_line = Vec::new();
+    append_quoted_argument(&mut command_line, description.executable_path.as_os_str())?;
+    for argument in &description.arguments {
+        command_line.push(b' ' as u16);
+        append_quoted_argument(&mut command_line, argument)?;
+    }
+    command_line.push(0);
+    Ok(command_line)
+}
+
+fn environment_block(description: &WindowsLaunchDescription) -> Result<Vec<u16>, ProcessTreeError> {
+    let mut environment = description.environment.clone();
+    environment.sort_by_cached_key(|(name, _)| name.to_string_lossy().to_ascii_uppercase());
+    let mut block = Vec::new();
+    for (name, value) in environment {
+        let name = name.encode_wide().collect::<Vec<_>>();
+        let value = value.encode_wide().collect::<Vec<_>>();
+        if name.contains(&0) || value.contains(&0) {
+            return Err(ProcessTreeError::Platform {
+                operation: "build_launch",
+                code: None,
+                message: "environment values must not contain NUL characters".into(),
+            });
+        }
+        block.extend(name);
+        block.push(b'=' as u16);
+        block.extend(value);
+        block.push(0);
+    }
+    block.push(0);
+    if block.len() == 1 {
+        block.push(0);
+    }
+    Ok(block)
 }
 
 fn raw_handle(handle: &OwnedHandle) -> HANDLE {
@@ -314,6 +477,112 @@ pub fn discover_codex_installation(
 }
 
 impl WindowsProcessTree {
+    pub fn spawn_suspended(
+        &mut self,
+        description: &WindowsLaunchDescription,
+    ) -> Result<WindowsProcessWaiter, ProcessTreeError> {
+        if self.state != ProcessTreeState::Created {
+            return Err(ProcessTreeError::InvalidTransition {
+                operation: "spawn_suspended",
+                state: self.state,
+            });
+        }
+
+        let application = wide_null_os(description.executable_path.as_os_str())?;
+        let mut command_line = command_line(description)?;
+        let environment = environment_block(description)?;
+        let current_directory = wide_null_os(description.current_directory.as_os_str())?;
+        let mut startup = STARTUPINFOW {
+            cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+            ..Default::default()
+        };
+        let mut process_information = PROCESS_INFORMATION::default();
+        let created = unsafe {
+            CreateProcessW(
+                application.as_ptr(),
+                command_line.as_mut_ptr(),
+                null(),
+                null(),
+                0,
+                CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW,
+                environment.as_ptr().cast::<c_void>(),
+                current_directory.as_ptr(),
+                &mut startup,
+                &mut process_information,
+            )
+        };
+        if created == 0 {
+            return Err(last_platform_error(
+                "create_suspended",
+                "could not create the launcher process",
+            ));
+        }
+        let process = unsafe { OwnedHandle::from_raw_handle(process_information.hProcess) };
+        let primary_thread = unsafe { OwnedHandle::from_raw_handle(process_information.hThread) };
+        let Some(root_pid) = NonZeroU32::new(process_information.dwProcessId) else {
+            let error = ProcessTreeError::Platform {
+                operation: "create_suspended",
+                code: None,
+                message: "Windows returned a zero process identifier".into(),
+            };
+            unsafe {
+                TerminateProcess(raw_handle(&process), FORCE_EXIT_CODE);
+                WaitForSingleObject(raw_handle(&process), INFINITE);
+            }
+            return Err(error);
+        };
+
+        if unsafe { AssignProcessToJobObject(raw_handle(&self.job), raw_handle(&process)) } == 0 {
+            let error = last_platform_error(
+                "assign_suspended",
+                "suspended launcher could not be assigned to its process tree",
+            );
+            unsafe {
+                TerminateProcess(raw_handle(&process), FORCE_EXIT_CODE);
+                WaitForSingleObject(raw_handle(&process), INFINITE);
+            }
+            return Err(error);
+        }
+        let tree_process = unsafe {
+            OpenProcess(
+                PROCESS_SET_QUOTA | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE,
+                0,
+                root_pid.get(),
+            )
+        };
+        if tree_process.is_null() {
+            let error = last_platform_error(
+                "open_suspended_root",
+                "assigned launcher process could not be retained",
+            );
+            unsafe {
+                TerminateJobObject(raw_handle(&self.job), FORCE_EXIT_CODE);
+                WaitForSingleObject(raw_handle(&process), INFINITE);
+            }
+            return Err(error);
+        }
+        self.root_process = Some(unsafe { OwnedHandle::from_raw_handle(tree_process) });
+        self.state = ProcessTreeState::Running { root_pid };
+
+        if unsafe { ResumeThread(raw_handle(&primary_thread)) } == u32::MAX {
+            let error = last_platform_error(
+                "resume_root",
+                "assigned launcher process could not be resumed",
+            );
+            unsafe {
+                TerminateJobObject(raw_handle(&self.job), FORCE_EXIT_CODE);
+                WaitForSingleObject(raw_handle(&process), INFINITE);
+            }
+            self.state = ProcessTreeState::Exited { root_pid };
+            return Err(error);
+        }
+
+        Ok(WindowsProcessWaiter {
+            pid: root_pid.get(),
+            process,
+        })
+    }
+
     fn active_processes(&self) -> Result<u32, ProcessTreeError> {
         let mut accounting = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
         let succeeded = unsafe {
@@ -525,12 +794,20 @@ pub fn app_directories(app: &tauri::App) -> tauri::Result<AppDirectories> {
 
 #[cfg(test)]
 mod tests {
-    use super::{application_user_model_id, package_family_name, WindowsProcessTree};
+    use super::{
+        application_user_model_id, codex_launch_description, command_line, environment_block,
+        package_family_name, sanitized_launch_environment, WindowsLaunchDescription,
+        WindowsProcessTree, WindowsProcessWaiter,
+    };
     use crate::platform::process_tree::{ProcessTree, StopResult};
+    use crate::platform::CodexProfileDirectories;
     use std::{
+        ffi::OsString,
         fs,
         num::NonZeroU32,
+        os::windows::ffi::OsStringExt,
         os::windows::io::{AsRawHandle, FromRawHandle},
+        path::PathBuf,
         process::{Child, Command, Stdio},
         time::Duration,
     };
@@ -562,6 +839,17 @@ mod tests {
             .stderr(Stdio::null())
             .spawn()
             .unwrap()
+    }
+
+    fn cmd_description(arguments: impl IntoIterator<Item = OsString>) -> WindowsLaunchDescription {
+        WindowsLaunchDescription {
+            executable_path: std::env::var_os("ComSpec")
+                .map(Into::into)
+                .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32\cmd.exe")),
+            arguments: arguments.into_iter().collect(),
+            current_directory: std::env::temp_dir(),
+            environment: sanitized_launch_environment(std::env::vars_os()),
+        }
     }
 
     fn tree_for_child(child: &Child) -> WindowsProcessTree {
@@ -602,6 +890,177 @@ mod tests {
         tree.release().unwrap();
         assert_handle_is_closed(process_handle);
         assert_handle_is_closed(job_handle);
+    }
+
+    #[test]
+    fn launch_description_quotes_unicode_paths_and_sorts_a_private_environment() {
+        let description = WindowsLaunchDescription {
+            executable_path: PathBuf::from(r"C:\Program Files\Node 22\node.exe"),
+            arguments: vec![
+                OsString::from(r"C:\资源 目录\injector.mjs"),
+                OsString::from("--profile-path"),
+                OsString::from(r"C:\Users\示例 User\profile\"),
+                OsString::from("quote\"inside"),
+            ],
+            current_directory: PathBuf::from(r"C:\Program Files\Taskboard\resources\app"),
+            environment: sanitized_launch_environment([
+                (
+                    OsString::from("Path"),
+                    OsString::from(r"C:\Windows\System32"),
+                ),
+                (
+                    OsString::from("codex_taskboard_instance_secret"),
+                    OsString::from("must-not-reach-child"),
+                ),
+                (
+                    OsString::from("APPDATA"),
+                    OsString::from(r"C:\Users\示例\AppData"),
+                ),
+            ]),
+        };
+
+        let command = command_line(&description).unwrap();
+        let command = OsString::from_wide(&command[..command.len() - 1])
+            .to_string_lossy()
+            .into_owned();
+        assert!(command
+            .starts_with(r#""C:\Program Files\Node 22\node.exe" "C:\资源 目录\injector.mjs""#));
+        assert!(command.contains(r#""C:\Users\示例 User\profile\\""#));
+        assert!(command.contains(r#""quote\"inside""#));
+
+        let block = environment_block(&description).unwrap();
+        let block = OsString::from_wide(&block).to_string_lossy().into_owned();
+        assert!(block.starts_with("APPDATA="));
+        assert!(block.contains("\0Path="));
+        assert!(!block.to_ascii_uppercase().contains("CODEX_TASKBOARD_"));
+        assert!(block.ends_with("\0\0"));
+    }
+
+    #[test]
+    fn codex_launch_description_uses_launch_only_and_explicit_profile_arguments() {
+        let profiles = CodexProfileDirectories {
+            independent: PathBuf::from(r"C:\Users\示例 User\Taskboard\codex-profile"),
+            source: PathBuf::from(r"C:\Users\示例 User\AppData\Roaming\Codex"),
+        };
+        let description = codex_launch_description(
+            PathBuf::from(r"C:\Program Files\Taskboard\node.exe"),
+            PathBuf::from(r"C:\Program Files\Taskboard\resources\app\scripts\codex-injector.mjs"),
+            PathBuf::from(r"C:\Program Files\Taskboard\resources\app"),
+            PathBuf::from(r"C:\Program Files\WindowsApps\OpenAI.Codex\app\ChatGPT.exe"),
+            &profiles,
+        );
+
+        assert_eq!(description.arguments[1], "--launch-only");
+        assert_eq!(description.arguments[2], "--app-path");
+        assert_eq!(description.arguments[4], "--profile-path");
+        assert_eq!(
+            PathBuf::from(&description.arguments[5]),
+            profiles.independent
+        );
+        assert_eq!(description.arguments[6], "--source-profile-path");
+        assert_eq!(PathBuf::from(&description.arguments[7]), profiles.source);
+        assert!(!description
+            .arguments
+            .iter()
+            .any(|argument| { argument.to_string_lossy().contains("remote-debugging") }));
+        assert!(!description.environment.iter().any(|(name, _)| {
+            name.to_string_lossy()
+                .to_ascii_uppercase()
+                .starts_with("CODEX_TASKBOARD_")
+        }));
+    }
+
+    #[test]
+    fn suspended_launch_assigns_before_resume_and_reports_normal_exit() {
+        let mut tree = WindowsProcessTree::create().unwrap();
+        let launched = tree
+            .spawn_suspended(&cmd_description([
+                "/D".into(),
+                "/S".into(),
+                "/C".into(),
+                "exit 0".into(),
+            ]))
+            .unwrap();
+        assert!(launched.pid() > 0);
+        assert_eq!(launched.wait().unwrap(), 0);
+        assert!(matches!(
+            tree.stop_gracefully(Duration::from_secs(1)).unwrap(),
+            StopResult::AlreadyExited | StopResult::Exited
+        ));
+        tree.release().unwrap();
+    }
+
+    #[test]
+    fn suspended_launch_handles_an_executable_path_with_spaces_and_unicode() {
+        let root = std::env::temp_dir().join(format!(
+            "codex-taskboard Windows 启动 {}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let copied_executable = root.join("命令 helper.exe");
+        fs::copy(
+            std::env::var_os("ComSpec").unwrap_or_else(|| r"C:\Windows\System32\cmd.exe".into()),
+            &copied_executable,
+        )
+        .unwrap();
+        let mut description =
+            cmd_description(["/D".into(), "/S".into(), "/C".into(), "exit 0".into()]);
+        description.executable_path = copied_executable;
+        description.current_directory = root.clone();
+
+        let mut tree = WindowsProcessTree::create().unwrap();
+        let launched = tree.spawn_suspended(&description).unwrap();
+        assert_eq!(launched.wait().unwrap(), 0);
+        assert!(matches!(
+            tree.stop_gracefully(Duration::from_secs(1)).unwrap(),
+            StopResult::AlreadyExited | StopResult::Exited
+        ));
+        tree.release().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn suspended_launch_failure_leaves_the_job_reusable_and_does_not_adopt_a_pid() {
+        let mut tree = WindowsProcessTree::create().unwrap();
+        let mut description = cmd_description(std::iter::empty::<OsString>());
+        description.executable_path = PathBuf::from(r"C:\missing taskboard\不存在.exe");
+        let error = tree.spawn_suspended(&description).unwrap_err();
+        assert!(matches!(
+            error,
+            crate::platform::process_tree::ProcessTreeError::Platform {
+                operation: "create_suspended",
+                ..
+            }
+        ));
+        assert_eq!(
+            tree.state(),
+            crate::platform::process_tree::ProcessTreeState::Created
+        );
+        tree.release().unwrap();
+    }
+
+    #[test]
+    fn forcing_a_suspended_launch_tree_does_not_terminate_an_existing_process() {
+        let mut existing = ping_child("30");
+        let mut tree = WindowsProcessTree::create().unwrap();
+        let launched = tree
+            .spawn_suspended(&cmd_description([
+                "/D".into(),
+                "/S".into(),
+                "/C".into(),
+                "ping -n 30 127.0.0.1 >NUL".into(),
+            ]))
+            .unwrap();
+
+        assert_eq!(
+            tree.force_stop(Duration::from_secs(3)).unwrap(),
+            StopResult::Exited
+        );
+        assert_ne!(launched.wait().unwrap(), 0);
+        assert!(existing.try_wait().unwrap().is_none());
+        existing.kill().unwrap();
+        existing.wait().unwrap();
+        tree.release().unwrap();
     }
 
     #[test]
@@ -681,5 +1140,6 @@ mod tests {
     #[test]
     fn windows_process_tree_is_send() {
         assert_is_send::<WindowsProcessTree>();
+        assert_is_send::<WindowsProcessWaiter>();
     }
 }
