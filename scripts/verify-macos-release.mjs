@@ -15,6 +15,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { verifyUpdaterSignature } from "./verify-updater-signature.mjs";
+import {
+  createUpdaterManifest,
+  DARWIN_UPDATER_PLATFORMS,
+} from "./updater-manifest.mjs";
 
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 const dmgPath = process.argv[3] ? path.resolve(process.argv[3]) : null;
@@ -134,15 +138,21 @@ await verifyUpdaterSignature({
 
 const latest = JSON.parse(await readFile(path.join(releaseDirectory, "latest.json"), "utf8"));
 if (latest.version !== packageJson.version) throw new Error("latest.json version is incorrect");
+const darwinFragment = JSON.parse(await readFile(
+  path.join(releaseDirectory, "darwin-updater.json"),
+  "utf8",
+));
+const expectedLatest = createUpdaterManifest({
+  fragments: [darwinFragment],
+  expectedVersion: packageJson.version,
+  requiredPlatforms: DARWIN_UPDATER_PLATFORMS,
+  pubDate: latest.pub_date,
+});
+if (JSON.stringify(latest) !== JSON.stringify(expectedLatest)) {
+  throw new Error("latest.json does not match the verified Darwin updater fragment");
+}
 const expectedUrl = `https://github.com/chuspeeism/dashi-taskboard/releases/download/${releaseTag}/${artifactName}`;
-const expectedPlatforms = [
-  "darwin-aarch64",
-  "darwin-x86_64",
-  "darwin-universal",
-  "darwin-aarch64-app",
-  "darwin-x86_64-app",
-  "darwin-universal-app",
-];
+const expectedPlatforms = DARWIN_UPDATER_PLATFORMS;
 if (JSON.stringify(Object.keys(latest.platforms).sort()) !== JSON.stringify(expectedPlatforms.sort())) {
   throw new Error("latest.json Darwin platform set is incorrect");
 }

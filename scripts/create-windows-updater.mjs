@@ -13,10 +13,14 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { verifyUpdaterSignature } from "./verify-updater-signature.mjs";
+import {
+  updaterArtifactUrl,
+  validateUpdaterFragment,
+  WINDOWS_UPDATER_PLATFORMS,
+} from "./updater-manifest.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
-const repositoryUrl = "https://github.com/chuspeeism/dashi-taskboard";
 
 function canonicalArtifactName(version) {
   return `Codex.Taskboard_${version}_x64-setup.exe`;
@@ -59,27 +63,34 @@ export async function prepareWindowsUpdaterAsset({
   const destinationSignature = `${destination}.sig`;
   const metadataPath = path.join(outputDirectory, "windows-updater.json");
   await mkdir(outputDirectory, { recursive: true });
-  const metadata = {
+  const fragment = {
     schemaVersion: 1,
     version: expectedVersion,
-    target: "windows-x86_64",
-    artifact: artifactName,
-    signature,
-    url: `${repositoryUrl}/releases/download/${releaseTag}/${artifactName}`,
+    platforms: {
+      "windows-x86_64": {
+        artifact: artifactName,
+        signature,
+        url: updaterArtifactUrl(expectedVersion, artifactName),
+      },
+    },
   };
+  validateUpdaterFragment(fragment, {
+    expectedVersion,
+    allowedPlatforms: WINDOWS_UPDATER_PLATFORMS,
+  });
   const createdPaths = [];
   try {
     await copyFile(installerPath, destination, constants.COPYFILE_EXCL);
     createdPaths.push(destination);
     await copyFile(signaturePath, destinationSignature, constants.COPYFILE_EXCL);
     createdPaths.push(destinationSignature);
-    await writeFile(metadataPath, `${JSON.stringify(metadata, null, 2)}\n`, { flag: "wx" });
+    await writeFile(metadataPath, `${JSON.stringify(fragment, null, 2)}\n`, { flag: "wx" });
     createdPaths.push(metadataPath);
   } catch (error) {
     await Promise.all(createdPaths.map((createdPath) => rm(createdPath, { force: true })));
     throw error;
   }
-  return metadata;
+  return fragment;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -95,7 +106,7 @@ export async function main(argv = process.argv.slice(2)) {
     readFile(path.join(projectRoot, "package.json"), "utf8").then(JSON.parse),
     readFile(path.join(projectRoot, "src-tauri", "tauri.conf.json"), "utf8").then(JSON.parse),
   ]);
-  const metadata = await prepareWindowsUpdaterAsset({
+  const fragment = await prepareWindowsUpdaterAsset({
     installerPath,
     signaturePath: `${installerPath}.sig`,
     outputDirectory,
@@ -103,7 +114,8 @@ export async function main(argv = process.argv.slice(2)) {
     expectedVersion: packageJson.version,
     publicKey: tauriConfig.plugins.updater.pubkey,
   });
-  console.log(`Verified and staged ${metadata.artifact} with Tauri updater signature`);
+  const artifact = fragment.platforms["windows-x86_64"].artifact;
+  console.log(`Verified and staged ${artifact} with Tauri updater signature`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

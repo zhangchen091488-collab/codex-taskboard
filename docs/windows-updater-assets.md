@@ -23,5 +23,6 @@ It verifies the embedded public key, rejects a non-PE input or mismatched tag,
 then stages a canonical setup name, `.sig`, and `windows-updater.json`. Staging
 uses exclusive writes and removes files created by a failed partial operation.
 
-`windows-updater.json` is a Windows-only intermediate fragment. WIN-064 is the
-only task allowed to merge it with Darwin entries into `latest.json`.
+`windows-updater.json` is a Windows-only intermediate fragment using the shared
+`schemaVersion`, `version`, and `platforms` shape. WIN-064 is the only task
+allowed to merge it with Darwin entries into `latest.json`.

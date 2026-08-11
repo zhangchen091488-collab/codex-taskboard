@@ -63,7 +63,7 @@ test("Windows updater stages the verified Tauri v2 NSIS executable and metadata"
   const testFixture = await fixture();
   try {
     const outputDirectory = path.join(testFixture.root, "release");
-    const metadata = await prepareWindowsUpdaterAsset({
+    const fragment = await prepareWindowsUpdaterAsset({
       installerPath: testFixture.installerPath,
       signaturePath: `${testFixture.installerPath}.sig`,
       outputDirectory,
@@ -71,16 +71,17 @@ test("Windows updater stages the verified Tauri v2 NSIS executable and metadata"
       expectedVersion: "0.2.2",
       publicKey: testFixture.publicKey,
     });
-    assert.deepEqual(metadata, JSON.parse(await readFile(
+    assert.deepEqual(fragment, JSON.parse(await readFile(
       path.join(outputDirectory, "windows-updater.json"),
       "utf8",
     )));
+    const entry = fragment.platforms["windows-x86_64"];
     assert.deepEqual(
-      await readFile(path.join(outputDirectory, metadata.artifact)),
+      await readFile(path.join(outputDirectory, entry.artifact)),
       testFixture.artifact,
     );
-    assert.equal(metadata.target, "windows-x86_64");
-    assert.match(metadata.url, /\/v0\.2\.2\/Codex\.Taskboard_0\.2\.2_x64-setup\.exe$/);
+    assert.deepEqual(Object.keys(fragment.platforms), ["windows-x86_64"]);
+    assert.match(entry.url, /\/v0\.2\.2\/Codex\.Taskboard_0\.2\.2_x64-setup\.exe$/);
   } finally {
     await rm(testFixture.root, { recursive: true, force: true });
   }

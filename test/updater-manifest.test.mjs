@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import {
@@ -8,6 +9,19 @@ import {
   updaterArtifactUrl,
   WINDOWS_UPDATER_PLATFORMS,
 } from "../scripts/updater-manifest.mjs";
+
+const macProducerSource = await readFile(
+  new URL("../scripts/create-macos-updater.mjs", import.meta.url),
+  "utf8",
+);
+const macVerifierSource = await readFile(
+  new URL("../scripts/verify-macos-release.mjs", import.meta.url),
+  "utf8",
+);
+const windowsProducerSource = await readFile(
+  new URL("../scripts/create-windows-updater.mjs", import.meta.url),
+  "utf8",
+);
 
 function signatureEnvelope(fill) {
   const signatureRecord = Buffer.alloc(74, fill);
@@ -96,4 +110,14 @@ test("manifest merger rejects missing, duplicate, wrong-version, unsafe and malf
     }),
     /Invalid time value|pub_date/,
   );
+});
+
+test("Darwin and Windows producers use the shared fragment contract", () => {
+  assert.match(macProducerSource, /DARWIN_UPDATER_PLATFORMS/);
+  assert.match(macProducerSource, /darwin-updater\.json/);
+  assert.match(macProducerSource, /createUpdaterManifest/);
+  assert.match(macVerifierSource, /latest\.json does not match the verified Darwin updater fragment/);
+  assert.match(windowsProducerSource, /WINDOWS_UPDATER_PLATFORMS/);
+  assert.match(windowsProducerSource, /validateUpdaterFragment/);
+  assert.doesNotMatch(windowsProducerSource, /latest\.json/);
 });

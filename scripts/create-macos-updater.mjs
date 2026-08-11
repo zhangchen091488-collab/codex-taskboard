@@ -5,6 +5,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import {
+  createUpdaterManifest,
+  DARWIN_UPDATER_PLATFORMS,
+  updaterArtifactUrl,
+} from "./updater-manifest.mjs";
+
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
@@ -36,20 +42,29 @@ run("/usr/bin/tar", ["-czf", artifactPath, path.basename(appPath)], {
 run(path.join(projectRoot, "node_modules", ".bin", "tauri"), ["signer", "sign", artifactPath]);
 
 const signature = await readFile(`${artifactPath}.sig`, "utf8");
-const downloadUrl = `https://github.com/chuspeeism/dashi-taskboard/releases/download/${releaseTag}/${artifactName}`;
-const platform = { signature, url: downloadUrl };
-const latest = {
-  version: packageJson.version,
-  notes: `Codex Taskboard ${packageJson.version}`,
-  pub_date: new Date().toISOString(),
-  platforms: {
-    "darwin-aarch64": platform,
-    "darwin-x86_64": platform,
-    "darwin-universal": platform,
-    "darwin-aarch64-app": platform,
-    "darwin-x86_64-app": platform,
-    "darwin-universal-app": platform,
-  },
+const platform = {
+  artifact: artifactName,
+  signature,
+  url: updaterArtifactUrl(packageJson.version, artifactName),
 };
+const fragment = {
+  schemaVersion: 1,
+  version: packageJson.version,
+  platforms: Object.fromEntries(
+    DARWIN_UPDATER_PLATFORMS.map((target) => [target, platform]),
+  ),
+};
+const latest = createUpdaterManifest({
+  fragments: [fragment],
+  expectedVersion: packageJson.version,
+  requiredPlatforms: DARWIN_UPDATER_PLATFORMS,
+  pubDate: new Date().toISOString(),
+});
+await writeFile(
+  path.join(outputDirectory, "darwin-updater.json"),
+  `${JSON.stringify(fragment, null, 2)}\n`,
+);
 await writeFile(path.join(outputDirectory, "latest.json"), `${JSON.stringify(latest, null, 2)}\n`);
-console.log(`Created ${artifactPath}, ${artifactPath}.sig, and latest.json`);
+console.log(
+  `Created ${artifactPath}, ${artifactPath}.sig, darwin-updater.json, and latest.json`,
+);
