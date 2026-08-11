@@ -36,6 +36,7 @@ test("macOS build plan uses explicit prepare, bundles, and process environment",
     hostPlatform: "darwin",
   });
   assert.equal(plan.dryRun, true);
+  assert.equal(plan.signed, false);
   assert.equal(plan.target, "universal-apple-darwin");
   assert.deepEqual(plan.steps[0], {
     name: "prepare-macos",
@@ -64,6 +65,7 @@ test("Windows build plan creates an unsigned NSIS without requiring updater keys
     hostPlatform: "win32",
   });
   assert.equal(plan.target, "x86_64-pc-windows-msvc");
+  assert.equal(plan.signed, false);
   assert.deepEqual(plan.steps[0].args, [
     "/reviewed/npm-cli.js",
     "run",
@@ -83,6 +85,45 @@ test("Windows build plan creates an unsigned NSIS without requiring updater keys
   assert.deepEqual(plan.steps[1].environment, { CI: "true" });
 });
 
+test("signed Windows build fails closed and passes only public signing metadata to Tauri", () => {
+  const plan = createTauriBuildPlan(["--sign"], {
+    ...planOptions,
+    hostPlatform: "win32",
+    environment: {
+      WINDOWS_CERTIFICATE_THUMBPRINT: "0123456789abcdef0123456789abcdef01234567",
+      WINDOWS_TIMESTAMP_URL: "https://timestamp.example.test/rfc3161",
+      WINDOWS_TIMESTAMP_PROTOCOL: "rfc3161",
+    },
+  });
+  assert.equal(plan.signed, true);
+  assert.doesNotMatch(JSON.stringify(plan), /CERTIFICATE_PASSWORD|PRIVATE_KEY|PFX/);
+  assert.deepEqual(plan.steps[1].args, [
+    "/reviewed/tauri.js",
+    "build",
+    "--target",
+    "x86_64-pc-windows-msvc",
+    "--bundles",
+    "nsis",
+    "--config",
+    '{"bundle":{"createUpdaterArtifacts":false,"windows":{"certificateThumbprint":"0123456789ABCDEF0123456789ABCDEF01234567","digestAlgorithm":"sha256","timestampUrl":"https://timestamp.example.test/rfc3161","tsp":true}}}',
+  ]);
+  assert.throws(
+    () => createTauriBuildPlan(["--sign"], {
+      ...planOptions,
+      hostPlatform: "win32",
+      environment: {},
+    }),
+    /WINDOWS_CERTIFICATE_THUMBPRINT/,
+  );
+  assert.throws(
+    () => createTauriBuildPlan(["--sign"], {
+      ...planOptions,
+      hostPlatform: "darwin",
+    }),
+    /only for Windows builds/,
+  );
+});
+
 test("build entry rejects unknown hosts, targets, duplicate options, and direct invocation", () => {
   assert.throws(
     () => createTauriBuildPlan([], { ...planOptions, hostPlatform: "linux" }),
@@ -95,6 +136,10 @@ test("build entry rejects unknown hosts, targets, duplicate options, and direct 
   assert.throws(
     () => createTauriBuildPlan(["--dry-run", "--dry-run"], planOptions),
     /--dry-run option may only be specified once/,
+  );
+  assert.throws(
+    () => createTauriBuildPlan(["--sign", "--sign"], planOptions),
+    /--sign option may only be specified once/,
   );
   assert.throws(
     () => createTauriBuildPlan([], { ...planOptions, npmCliPath: "", hostPlatform: "darwin" }),
