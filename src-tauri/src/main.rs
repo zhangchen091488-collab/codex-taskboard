@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod platform;
+#[cfg(target_os = "macos")]
+mod readiness;
 
 #[cfg(target_os = "macos")]
 use serde::Deserialize;
@@ -21,6 +23,7 @@ use std::{
     io::{BufRead, BufReader},
     net::TcpListener,
     process::{Command as StdCommand, Stdio},
+    sync::mpsc,
     thread,
     time::{Duration, Instant},
 };
@@ -70,6 +73,7 @@ struct LauncherState {
     lifecycle: Mutex<()>,
     #[cfg(target_os = "macos")]
     taskboard_listener: Mutex<Option<TcpListener>>,
+    taskboard_url: Mutex<Option<String>>,
     data_directory: PathBuf,
     log_path: PathBuf,
     #[cfg(target_os = "macos")]
@@ -96,6 +100,7 @@ impl LauncherState {
             lifecycle: Mutex::new(()),
             #[cfg(target_os = "macos")]
             taskboard_listener: Mutex::new(None),
+            taskboard_url: Mutex::new(None),
             #[cfg(target_os = "macos")]
             pid_record_path: data_directory.join("launcher-child.json"),
             data_directory,
@@ -279,6 +284,7 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
             "Windows child state exists before the process lifecycle backend is implemented",
         );
     }
+    *state.taskboard_url.lock().unwrap() = None;
     update_snapshot(app, state, |snapshot| {
         snapshot.phase = "stopped".into();
         snapshot.message = "任务面板已停止。".into();
@@ -297,19 +303,45 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
     is_stderr: bool,
     app: AppHandle,
     state: Arc<LauncherState>,
+    readiness_sender: Option<mpsc::Sender<Result<readiness::ListeningReadiness, String>>>,
 ) {
     thread::spawn(move || {
+        let mut readiness_observed = false;
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
+            if !is_stderr {
+                match readiness::parse_launcher_readiness_line(&line) {
+                    Ok(Some(readiness::ReadinessEvent::Listening(message))) => {
+                        readiness_observed = true;
+                        if let Some(sender) = &readiness_sender {
+                            let _ = sender.send(Ok(message));
+                        }
+                        continue;
+                    }
+                    Ok(Some(readiness::ReadinessEvent::Error)) => {
+                        readiness_observed = true;
+                        append_log(&state, "Taskboard readiness reported a startup failure");
+                        if let Some(sender) = &readiness_sender {
+                            let _ =
+                                sender.send(Err("Taskboard startup failed: LISTEN_FAILED".into()));
+                        }
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        readiness_observed = true;
+                        append_log(&state, "Rejected invalid Taskboard readiness message");
+                        if let Some(sender) = &readiness_sender {
+                            let _ = sender.send(Err(error));
+                        }
+                        continue;
+                    }
+                }
+            }
             append_log(&state, &line);
             if is_stderr && line.contains("Waiting for Codex") {
                 update_snapshot(&app, &state, |snapshot| {
                     snapshot.phase = "starting".into();
                     snapshot.message = "正在等待 Codex 窗口…".into();
-                });
-            } else if !is_stderr && line.contains("Codex Taskboard listening") {
-                update_snapshot(&app, &state, |snapshot| {
-                    snapshot.phase = "starting".into();
-                    snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
                 });
             } else if !is_stderr && line.contains("\"injected\"") {
                 update_snapshot(&app, &state, |snapshot| {
@@ -318,7 +350,36 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
                 });
             }
         }
+        if !is_stderr && !readiness_observed {
+            if let Some(sender) = &readiness_sender {
+                let _ = sender.send(Err(
+                    "Launcher child exited before Taskboard readiness".into()
+                ));
+            }
+        }
     });
+}
+
+#[cfg(target_os = "macos")]
+fn apply_taskboard_readiness(
+    app: &AppHandle,
+    state: &Arc<LauncherState>,
+    instance_token: &str,
+    listening: &readiness::ListeningReadiness,
+) {
+    let taskboard_url = readiness::taskboard_url(listening, instance_token);
+    *state.taskboard_url.lock().unwrap() = Some(taskboard_url);
+    update_snapshot(app, state, |snapshot| {
+        snapshot.phase = "starting".into();
+        snapshot.message = "任务面板服务已启动，正在注入 Codex…".into();
+    });
+    append_log(
+        state,
+        &format!(
+            "Taskboard readiness accepted on {}:{}",
+            listening.host, listening.port
+        ),
+    );
 }
 
 #[cfg(target_os = "macos")]
@@ -379,6 +440,7 @@ fn start_launcher_locked(
         .env("CODEX_TASKBOARD_PORT", taskboard_port.to_string())
         .env("CODEX_TASKBOARD_INSTANCE_TOKEN", &instance_token)
         .env("CODEX_TASKBOARD_INSTANCE_SECRET", &instance_secret)
+        .env("CODEX_TASKBOARD_LAUNCHER_READINESS", "1")
         .env("CODEX_TASKBOARD_VERSION", &version)
         .env(
             "CODEX_TASKBOARD_CODEX_PROFILE",
@@ -414,6 +476,51 @@ fn start_launcher_locked(
     }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
+    let (readiness_sender, readiness_receiver) = mpsc::channel();
+    if let Some(stdout) = stdout {
+        watch_launcher_output(
+            stdout,
+            false,
+            app.clone(),
+            state.clone(),
+            Some(readiness_sender),
+        );
+    }
+    if let Some(stderr) = stderr {
+        watch_launcher_output(stderr, true, app.clone(), state.clone(), None);
+    }
+    let listening =
+        match readiness::wait_for_taskboard_readiness(&readiness_receiver, Duration::from_secs(10))
+        {
+            Ok(listening) => listening,
+            Err(error) => {
+                append_log(state, &format!("Launcher readiness failed: {error}"));
+                send_process_group_signal(pid, libc::SIGKILL);
+                let _ = child.wait();
+                clear_pid_record(state, pid);
+                return Err(error);
+            }
+        };
+    apply_taskboard_readiness(app, state, &instance_token, &listening);
+    let readiness_app = app.clone();
+    let readiness_state = state.clone();
+    let readiness_token = instance_token.clone();
+    thread::spawn(move || {
+        while let Ok(result) = readiness_receiver.recv() {
+            match result {
+                Ok(listening) => apply_taskboard_readiness(
+                    &readiness_app,
+                    &readiness_state,
+                    &readiness_token,
+                    &listening,
+                ),
+                Err(error) => append_log(
+                    &readiness_state,
+                    &format!("Launcher follow-up readiness rejected: {error}"),
+                ),
+            }
+        }
+    });
     *state.child.lock().unwrap() = Some(pid);
     let snapshot = update_snapshot(app, state, |snapshot| {
         snapshot.child_pid = Some(pid);
@@ -421,15 +528,10 @@ fn start_launcher_locked(
     append_log(
         state,
         &format!(
-            "Started launcher child {pid} on Taskboard {taskboard_port} with private CDP pipe"
+            "Started launcher child {pid} on Taskboard {}:{} with private CDP pipe",
+            listening.host, listening.port
         ),
     );
-    if let Some(stdout) = stdout {
-        watch_launcher_output(stdout, false, app.clone(), state.clone());
-    }
-    if let Some(stderr) = stderr {
-        watch_launcher_output(stderr, true, app.clone(), state.clone());
-    }
 
     let event_app = app.clone();
     let event_state = state.clone();

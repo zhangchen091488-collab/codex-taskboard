@@ -101,6 +101,7 @@ export function createTaskboardSupervisor({
   isReachable,
   waitUntilReachable,
   waitForReadiness = waitForTaskboardReadiness,
+  onReadiness = () => {},
   start,
   onProcessError = () => {},
   onUnexpectedExit = () => {},
@@ -144,6 +145,7 @@ export function createTaskboardSupervisor({
 
       try {
         const readiness = await waitForReadiness(started, 10_000);
+        await onReadiness(readiness);
         await waitUntilReachable(10_000);
         retryAfter = 0;
         return { status: "ok", restarted: true, readiness };

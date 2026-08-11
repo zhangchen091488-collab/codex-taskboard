@@ -10,6 +10,7 @@ import {
 import {
   createTaskboardReadinessTracker,
   errorReadiness,
+  formatLauncherReadinessLine,
   listeningReadiness,
   parseTaskboardReadiness,
 } from "../shared/taskboard-readiness.mjs";
@@ -59,6 +60,9 @@ test("an unhealthy live child exits before its replacement starts", async () => 
       events.push(["readiness", child.name, timeoutMs]);
       return listeningReadiness(47823);
     },
+    onReadiness: async (readiness) => {
+      events.push(["endpoint", readiness.port]);
+    },
     start: () => {
       const child = new ManagedChild(`child-${++sequence}`, events);
       events.push(["start", child.name]);
@@ -69,14 +73,16 @@ test("an unhealthy live child exits before its replacement starts", async () => 
   await supervisor.ensure();
   await supervisor.ensure({ force: true });
 
-  assert.deepEqual(events.slice(0, 8), [
+  assert.deepEqual(events.slice(0, 10), [
     ["start", "child-1"],
     ["readiness", "child-1", 10_000],
+    ["endpoint", 47823],
     ["health", 10_000],
     ["health", 3_000],
     ["kill", "child-1", "SIGTERM"],
     ["start", "child-2"],
     ["readiness", "child-2", 10_000],
+    ["endpoint", 47823],
     ["health", 10_000],
   ]);
   await supervisor.stop();
@@ -106,6 +112,21 @@ test("readiness schema accepts only versioned loopback terminal messages", () =>
   ]) {
     assert.throws(() => parseTaskboardReadiness(message), /Taskboard readiness|readiness message/);
   }
+});
+
+test("launcher readiness framing has one fixed prefix and compact JSON payload", () => {
+  assert.equal(
+    formatLauncherReadinessLine(listeningReadiness(49152)),
+    "CODEX_TASKBOARD_READINESS_V1 "
+      + '{"type":"codex-taskboard:readiness","version":1,"status":"listening",'
+      + '"host":"127.0.0.1","port":49152}',
+  );
+  assert.equal(
+    formatLauncherReadinessLine(errorReadiness()),
+    "CODEX_TASKBOARD_READINESS_V1 "
+      + '{"type":"codex-taskboard:readiness","version":1,"status":"error",'
+      + '"code":"LISTEN_FAILED"}',
+  );
 });
 
 test("readiness tracker rejects duplicate and timeout states", () => {

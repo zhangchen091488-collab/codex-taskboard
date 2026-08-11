@@ -1,5 +1,6 @@
 export const TASKBOARD_READINESS_TYPE = "codex-taskboard:readiness";
 export const TASKBOARD_READINESS_VERSION = 1;
+export const TASKBOARD_LAUNCHER_READINESS_PREFIX = "CODEX_TASKBOARD_READINESS_V1 ";
 
 function exactKeys(value, expected) {
   const actual = Object.keys(value).sort();
@@ -23,6 +24,10 @@ export function errorReadiness() {
     status: "error",
     code: "LISTEN_FAILED",
   };
+}
+
+export function formatLauncherReadinessLine(value) {
+  return `${TASKBOARD_LAUNCHER_READINESS_PREFIX}${JSON.stringify(parseTaskboardReadiness(value))}`;
 }
 
 export function parseTaskboardReadiness(value) {

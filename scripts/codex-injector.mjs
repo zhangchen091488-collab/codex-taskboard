@@ -6,7 +6,7 @@ import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-import { resolvePort } from "../server/app.mjs";
+import { resolveLauncherPort } from "../server/app.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import {
@@ -14,6 +14,10 @@ import {
   reconcileTaskboardAutomation,
   taskboardAutomationPolicyOperation,
 } from "../shared/taskboard-automation.mjs";
+import {
+  errorReadiness,
+  formatLauncherReadinessLine,
+} from "../shared/taskboard-readiness.mjs";
 import {
   findResidentInjectorPids,
   handleHostBindingPayload,
@@ -70,10 +74,25 @@ const taskboardInstanceSecret = (
 process.env.CODEX_TASKBOARD_INSTANCE_SECRET = taskboardInstanceSecret;
 const taskboardVersion = process.env.CODEX_TASKBOARD_VERSION?.trim() || "development";
 process.env.CODEX_TASKBOARD_VERSION = taskboardVersion;
-const taskboardOrigin = `http://127.0.0.1:${resolvePort()}`;
-const taskboardHealthUrl = `${taskboardOrigin}/health`;
-const taskboardBaseUrl = `${taskboardOrigin}/${encodeURIComponent(taskboardInstanceToken)}`;
-const taskboardPageUrl = `${taskboardBaseUrl}/?host=codex`;
+let taskboardOrigin;
+let taskboardHealthUrl;
+let taskboardBaseUrl;
+let taskboardPageUrl;
+
+function configureTaskboardEndpoint(port) {
+  taskboardOrigin = `http://127.0.0.1:${port}`;
+  taskboardHealthUrl = `${taskboardOrigin}/health`;
+  taskboardBaseUrl = `${taskboardOrigin}/${encodeURIComponent(taskboardInstanceToken)}`;
+  taskboardPageUrl = `${taskboardBaseUrl}/?host=codex`;
+}
+
+configureTaskboardEndpoint(resolveLauncherPort());
+
+function reportLauncherReadiness(readiness) {
+  if (process.env.CODEX_TASKBOARD_LAUNCHER_READINESS !== "1") return;
+  if (!readiness) throw new Error("Taskboard supervisor did not return readiness");
+  process.stdout.write(`${formatLauncherReadinessLine(readiness)}\n`);
+}
 const hostBindingName = "__codexTaskboardHostV1";
 const hostRequestMessage = "__codexTaskboardHostRequestV1";
 const hostResponseMessage = "__codexTaskboardHostResponseV1";
@@ -1581,6 +1600,7 @@ async function main() {
     detached,
     isReachable: isTaskboardReachable,
     waitUntilReachable: waitUntilTaskboardReachable,
+    onReadiness: (readiness) => configureTaskboardEndpoint(readiness.port),
     start: () => startTaskboard({ detached }),
     onProcessError: (error) => {
       console.error(`Taskboard process error: ${error.message}`);
@@ -1642,7 +1662,16 @@ async function main() {
       }
     }
 
-    await supervisor.ensure({ force: true });
+    let initialService;
+    try {
+      initialService = await supervisor.ensure({ force: true });
+    } catch (error) {
+      if (error?.message === "Taskboard startup failed: LISTEN_FAILED") {
+        reportLauncherReadiness(errorReadiness());
+      }
+      throw error;
+    }
+    reportLauncherReadiness(initialService.readiness);
     await publishTaskboardRuntime();
     if (options.launch) await importCodexBrowserProfile();
 
@@ -1698,7 +1727,10 @@ async function main() {
       if (stopping) break;
       try {
         const service = await supervisor.ensure();
-        if (service.restarted) await publishTaskboardRuntime();
+        if (service.restarted) {
+          reportLauncherReadiness(service.readiness);
+          await publishTaskboardRuntime();
+        }
       } catch (error) {
         console.error(`Waiting for Taskboard service: ${error.message}`);
       }

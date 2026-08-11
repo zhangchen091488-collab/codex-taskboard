@@ -15,6 +15,14 @@ const windowsPlatformSource = await readFile(
   new URL("../src-tauri/src/platform/windows.rs", import.meta.url),
   "utf8",
 );
+const rustReadinessSource = await readFile(
+  new URL("../src-tauri/src/readiness.rs", import.meta.url),
+  "utf8",
+);
+const nodeReadinessSource = await readFile(
+  new URL("../shared/taskboard-readiness.mjs", import.meta.url),
+  "utf8",
+);
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 const tauriMacosConfig = JSON.parse(await readFile(
   new URL("../src-tauri/tauri.macos.conf.json", import.meta.url),
@@ -78,6 +86,19 @@ test("the macOS launcher uses one instance, serialized lifecycle changes, and a 
   assert.match(launcherSource, /"--cdp-pipe"/);
   assert.doesNotMatch(launcherSource, /cdp_port/);
   assert.doesNotMatch(launcherSource, /const LAUNCHER_PORT/);
+});
+
+test("the launcher waits for the same strict readiness frame emitted by Node", () => {
+  const rustPrefix = rustReadinessSource.match(/LAUNCHER_READINESS_PREFIX: &str = "([^"]+)"/)?.[1];
+  const nodePrefix = nodeReadinessSource.match(/TASKBOARD_LAUNCHER_READINESS_PREFIX = "([^"]+)"/)?.[1];
+
+  assert.equal(rustPrefix, "CODEX_TASKBOARD_READINESS_V1 ");
+  assert.equal(nodePrefix, rustPrefix);
+  assert.match(launcherSource, /CODEX_TASKBOARD_LAUNCHER_READINESS", "1"/);
+  assert.match(launcherSource, /wait_for_taskboard_readiness/);
+  assert.match(launcherSource, /Duration::from_secs\(10\)/);
+  assert.match(launcherSource, /taskboard_url: Mutex<Option<String>>/);
+  assert.doesNotMatch(launcherSource, /line\.contains\("Codex Taskboard listening"\)/);
 });
 
 test("release signing is tag-only and PR CI builds the real unsigned app bundle", () => {
