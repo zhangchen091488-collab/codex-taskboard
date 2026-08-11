@@ -48,6 +48,10 @@ const tauriMacosConfig = JSON.parse(await readFile(
 ));
 const releaseWorkflow = await readFile(new URL("../.github/workflows/release-macos.yml", import.meta.url), "utf8");
 const checkWorkflow = await readFile(new URL("../.github/workflows/check.yml", import.meta.url), "utf8");
+const windowsTaskctlFixture = await readFile(
+  new URL("./windows-taskctl-wrapper.ps1", import.meta.url),
+  "utf8",
+);
 
 test("the launcher keeps OS-specific app setup behind one platform boundary", () => {
   assert.match(launcherSource, /platform::configure_app\(app\)/);
@@ -251,6 +255,17 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
   );
   assert.doesNotMatch(checkWorkflow, /check-only Windows icon placeholder/);
   assert.doesNotMatch(checkWorkflow, /New-Item -ItemType File.*node-x86_64-pc-windows-msvc\.exe/);
+  assert.doesNotMatch(checkWorkflow, /toolchain: 1\.88\.0/);
+});
+
+test("Windows taskctl fixture observes an intentional native exit without losing cmd resolution", () => {
+  assert.match(windowsTaskctlFixture, /PSNativeCommandUseErrorActionPreference = \$false/);
+  assert.match(windowsTaskctlFixture, /Join-Path \$env:SystemRoot "System32"/);
+  assert.match(
+    windowsTaskctlFixture,
+    /PSNativeCommandUseErrorActionPreference = \$savedNativePreference/,
+  );
+  assert.doesNotMatch(windowsTaskctlFixture, /\$env:PATH = ""/);
 });
 
 test("the launcher minimum system version matches the current Codex client requirement", () => {

@@ -93,8 +93,6 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
-        with:
-          toolchain: 1.88.0
       - run: npm ci
       - name: Prepare and verify the Windows Node sidecar
         shell: pwsh

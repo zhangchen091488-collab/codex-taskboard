@@ -27,6 +27,14 @@ $savedPath = $env:PATH
 $savedAppData = $env:APPDATA
 $savedDataDirectory = $env:CODEX_TASKBOARD_DATA_DIR
 $savedRuntimeFile = $env:CODEX_TASKBOARD_RUNTIME_FILE
+$nativePreference = Get-Variable `
+  -Name PSNativeCommandUseErrorActionPreference `
+  -ErrorAction SilentlyContinue
+$savedNativePreference = if ($null -ne $nativePreference) {
+  $nativePreference.Value
+} else {
+  $null
+}
 try {
   New-Item -ItemType Directory -Force $fixtureBin, $fixtureCli | Out-Null
   Copy-Item $sourceNode $fixtureNode
@@ -41,10 +49,13 @@ console.log(JSON.stringify({
 process.exit(Number(process.argv[2]));
 '@ | Set-Content -Encoding utf8 $fixtureScript
 
-  $env:PATH = ""
+  $env:PATH = Join-Path $env:SystemRoot "System32"
   $env:APPDATA = $fixtureAppData
   $env:CODEX_TASKBOARD_DATA_DIR = $null
   $env:CODEX_TASKBOARD_RUNTIME_FILE = $null
+  if ($null -ne $nativePreference) {
+    $PSNativeCommandUseErrorActionPreference = $false
+  }
   $rawOutput = & $fixtureWrapper "37" "argument with spaces" "中文参数"
   $wrapperExitCode = $LASTEXITCODE
   $result = $rawOutput | ConvertFrom-Json
@@ -78,6 +89,9 @@ process.exit(Number(process.argv[2]));
   $env:APPDATA = $savedAppData
   $env:CODEX_TASKBOARD_DATA_DIR = $savedDataDirectory
   $env:CODEX_TASKBOARD_RUNTIME_FILE = $savedRuntimeFile
+  if ($null -ne $nativePreference) {
+    $PSNativeCommandUseErrorActionPreference = $savedNativePreference
+  }
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $fixtureRoot
 }
 
