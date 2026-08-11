@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import {
   chmod,
@@ -18,11 +18,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const nodeVersion = "22.23.2";
+const nodeDistributionUrl = `https://nodejs.org/dist/v${nodeVersion}`;
 const nodeArchitectures = ["arm64", "x64"];
 const nodeArchiveSha256 = {
   arm64: "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6",
   x64: "58e99022c2ff89395576cc7fd4d98cea24bb68081475d5f88b801ee8729fb026",
 };
+const windowsNodeArchiveName = `node-v${nodeVersion}-win-x64.zip`;
+const windowsNodeArchiveSha256 =
+  "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97";
+const windowsNodeExecutableSha256 =
+  "0d0f5e39f9f3d9587bc19f73eab3c2c9c4903fd02d6dbf9c853dd81b3d95fad4";
 const targetsByPlatform = new Map([
   ["darwin", new Set([
     "aarch64-apple-darwin",
@@ -96,29 +102,46 @@ async function sha256(filePath) {
   return hash.digest("hex");
 }
 
-async function download(url, destination) {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Download failed: ${response.status} ${response.statusText} (${url})`);
+export async function ensureVerifiedArchive({
+  archivePath,
+  expectedChecksum,
+  url,
+  fetchImpl = fetch,
+}) {
+  if ((await exists(archivePath)) && (await sha256(archivePath)) === expectedChecksum) {
+    return { archivePath, fromCache: true };
   }
-  const temporaryPath = `${destination}.download`;
-  await writeFile(temporaryPath, Buffer.from(await response.arrayBuffer()));
-  await rename(temporaryPath, destination);
+
+  const temporaryPath = `${archivePath}.${process.pid}-${randomUUID()}.download`;
+  try {
+    const response = await fetchImpl(url);
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status} ${response.statusText} (${url})`);
+    }
+    await writeFile(temporaryPath, Buffer.from(await response.arrayBuffer()));
+    const actualChecksum = await sha256(temporaryPath);
+    if (actualChecksum !== expectedChecksum) {
+      throw new Error(
+        `Checksum verification failed for ${path.basename(archivePath)}: ` +
+          `expected ${expectedChecksum}, received ${actualChecksum}`,
+      );
+    }
+    await rename(temporaryPath, archivePath);
+    return { archivePath, fromCache: false };
+  } finally {
+    await rm(temporaryPath, { force: true });
+  }
 }
 
 async function verifiedNodeArchive(architecture) {
   const archiveName = `node-v${nodeVersion}-darwin-${architecture}.tar.gz`;
   const expectedChecksum = nodeArchiveSha256[architecture];
-
   const archivePath = path.join(runtimeCacheDirectory, archiveName);
-  if (!(await exists(archivePath)) || (await sha256(archivePath)) !== expectedChecksum) {
-    await rm(archivePath, { force: true });
-    await download(`https://nodejs.org/dist/v${nodeVersion}/${archiveName}`, archivePath);
-  }
-  if ((await sha256(archivePath)) !== expectedChecksum) {
-    throw new Error(`Checksum verification failed for ${archiveName}`);
-  }
-  return { archiveName, archivePath };
+  return ensureVerifiedArchive({
+    archivePath,
+    expectedChecksum,
+    url: `${nodeDistributionUrl}/${archiveName}`,
+  });
 }
 
 async function extractNodeRuntime(architecture) {
@@ -128,6 +151,97 @@ async function extractNodeRuntime(architecture) {
   await mkdir(destination, { recursive: true });
   run("/usr/bin/tar", ["-xzf", archivePath, "-C", destination]);
   return path.join(destination, `node-v${nodeVersion}-darwin-${architecture}`);
+}
+
+export function windowsZipExtractionCommand(
+  archivePath,
+  destination,
+  { platform = process.platform, environment = process.env } = {},
+) {
+  if (platform === "win32") {
+    const systemRoot = environment.SystemRoot || environment.SYSTEMROOT || String.raw`C:\Windows`;
+    return {
+      command: path.win32.join(systemRoot, "System32", "tar.exe"),
+      args: ["-xf", archivePath, "-C", destination],
+    };
+  }
+  if (platform === "darwin") {
+    return { command: "/usr/bin/ditto", args: ["-x", "-k", archivePath, destination] };
+  }
+  if (platform === "linux") {
+    return { command: "unzip", args: ["-q", archivePath, "-d", destination] };
+  }
+  throw new Error(`ZIP extraction is not supported on platform: ${platform}`);
+}
+
+export function assertWindowsX64Pe(contents, fileName = "Windows Node executable") {
+  if (
+    !Buffer.isBuffer(contents) ||
+    contents.length < 64 ||
+    contents.toString("ascii", 0, 2) !== "MZ"
+  ) {
+    throw new Error(`${fileName} is not a valid PE executable`);
+  }
+  const peOffset = contents.readUInt32LE(0x3c);
+  if (
+    peOffset + 6 > contents.length ||
+    contents.toString("binary", peOffset, peOffset + 4) !== "PE\u0000\u0000"
+  ) {
+    throw new Error(`${fileName} is not a valid PE executable`);
+  }
+  const machine = contents.readUInt16LE(peOffset + 4);
+  if (machine !== 0x8664) {
+    throw new Error(
+      `${fileName} has unsupported PE machine 0x${machine.toString(16)}; expected x86_64`,
+    );
+  }
+}
+
+async function verifiedWindowsNodeArchive() {
+  const archivePath = path.join(runtimeCacheDirectory, windowsNodeArchiveName);
+  return ensureVerifiedArchive({
+    archivePath,
+    expectedChecksum: windowsNodeArchiveSha256,
+    url: `${nodeDistributionUrl}/${windowsNodeArchiveName}`,
+  });
+}
+
+async function prepareWindowsNodeRuntime() {
+  const { archivePath } = await verifiedWindowsNodeArchive();
+  const destination = path.join(extractionDirectory, "win32-x64");
+  await rm(destination, { recursive: true, force: true });
+  await mkdir(destination, { recursive: true });
+  const extraction = windowsZipExtractionCommand(archivePath, destination);
+  run(extraction.command, extraction.args);
+
+  const runtimeRoot = path.join(destination, `node-v${nodeVersion}-win-x64`);
+  const sourceNodePath = path.join(runtimeRoot, "node.exe");
+  const temporaryNodePath = path.join(
+    binariesDirectory,
+    `.node-x86_64-pc-windows-msvc.exe.${process.pid}-${randomUUID()}.prepare`,
+  );
+  const targetNodePath = path.join(binariesDirectory, "node-x86_64-pc-windows-msvc.exe");
+  await mkdir(binariesDirectory, { recursive: true });
+  try {
+    await copyFile(sourceNodePath, temporaryNodePath);
+    const executableChecksum = await sha256(temporaryNodePath);
+    if (executableChecksum !== windowsNodeExecutableSha256) {
+      throw new Error(
+        `Checksum verification failed for node.exe: expected ${windowsNodeExecutableSha256}, ` +
+          `received ${executableChecksum}`,
+      );
+    }
+    assertWindowsX64Pe(await readFile(temporaryNodePath), "node.exe");
+    await rename(temporaryNodePath, targetNodePath);
+  } finally {
+    await rm(temporaryNodePath, { force: true });
+  }
+
+  await mkdir(path.join(resourcesDirectory, "licenses"), { recursive: true });
+  await copyFile(
+    path.join(runtimeRoot, "LICENSE"),
+    path.join(resourcesDirectory, "licenses", "Node-LICENSE"),
+  );
 }
 
 async function prepareNodeRuntime() {
@@ -160,10 +274,6 @@ async function prepareNodeRuntime() {
   await copyFile(
     path.join(runtimes.get("arm64"), "LICENSE"),
     path.join(resourcesDirectory, "licenses", "Node-LICENSE"),
-  );
-  await copyFile(
-    path.join(tauriRoot, "licenses", "Lobe-Icons-LICENSE.txt"),
-    path.join(resourcesDirectory, "licenses", "Lobe-Icons-LICENSE.txt"),
   );
 }
 
@@ -207,6 +317,11 @@ async function copyApplicationResources() {
     path.join(projectRoot, "cli", "taskctl.mjs"),
     path.join(appResources, "cli", "taskctl.mjs"),
   );
+  await mkdir(path.join(resourcesDirectory, "licenses"), { recursive: true });
+  await copyFile(
+    path.join(tauriRoot, "licenses", "Lobe-Icons-LICENSE.txt"),
+    path.join(resourcesDirectory, "licenses", "Lobe-Icons-LICENSE.txt"),
+  );
 }
 
 async function prepareMacosTaskctlWrapper() {
@@ -232,15 +347,23 @@ async function prepareMacos(target) {
   await mkdir(runtimeCacheDirectory, { recursive: true });
   await copyApplicationResources();
   await prepareMacosTaskctlWrapper();
-  await prepareNodeRuntime();
-  await rm(extractionDirectory, { recursive: true, force: true });
+  try {
+    await prepareNodeRuntime();
+  } finally {
+    await rm(extractionDirectory, { recursive: true, force: true });
+  }
   console.log(`Prepared Tauri resources for ${target} with Node.js ${nodeVersion}`);
 }
 
-async function prepareWindows() {
-  throw new Error(
-    "Windows resource preparation requires the Windows Node sidecar from WIN-021",
-  );
+async function prepareWindows(target) {
+  await mkdir(runtimeCacheDirectory, { recursive: true });
+  await copyApplicationResources();
+  try {
+    await prepareWindowsNodeRuntime();
+  } finally {
+    await rm(extractionDirectory, { recursive: true, force: true });
+  }
+  console.log(`Prepared Tauri resources for ${target} with Node.js ${nodeVersion}`);
 }
 
 export async function dispatchPreparation(

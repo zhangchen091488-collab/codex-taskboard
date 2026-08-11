@@ -77,10 +77,19 @@ jobs:
         with:
           toolchain: 1.88.0
       - run: npm ci
-      - name: Prepare check-only Windows resource placeholders
+      - name: Build application resources
+        run: npm run build:web
+      - name: Prepare and verify the Windows Node sidecar
         shell: pwsh
         run: |
-          New-Item -ItemType File -Force src-tauri/binaries/node-x86_64-pc-windows-msvc.exe
+          node scripts/prepare-tauri-app.mjs --target x86_64-pc-windows-msvc
+          $version = & .\src-tauri\binaries\node-x86_64-pc-windows-msvc.exe --version
+          if ($version -ne "v22.23.2") {
+            throw "Unexpected Windows Node sidecar version: $version"
+          }
+      - name: Prepare check-only Windows icon placeholder
+        shell: pwsh
+        run: |
           npm run tauri -- icon src-tauri/icons/icon.png --output "$env:RUNNER_TEMP/taskboard-icons"
           Copy-Item "$env:RUNNER_TEMP/taskboard-icons/icon.ico" src-tauri/icons/icon.ico
       - name: Check the Windows launcher target

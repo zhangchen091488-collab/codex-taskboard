@@ -95,7 +95,11 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
   assert.match(checkWorkflow, /--no-sign/);
   assert.match(checkWorkflow, /runs-on: windows-latest/);
   assert.match(checkWorkflow, /cargo check --locked --manifest-path src-tauri\/Cargo\.toml --target x86_64-pc-windows-msvc/);
-  assert.match(checkWorkflow, /Prepare check-only Windows resource placeholders/);
+  assert.match(checkWorkflow, /prepare-tauri-app\.mjs --target x86_64-pc-windows-msvc/);
+  assert.match(checkWorkflow, /node-x86_64-pc-windows-msvc\.exe --version/);
+  assert.match(checkWorkflow, /Unexpected Windows Node sidecar version/);
+  assert.match(checkWorkflow, /Prepare check-only Windows icon placeholder/);
+  assert.doesNotMatch(checkWorkflow, /New-Item -ItemType File.*node-x86_64-pc-windows-msvc\.exe/);
 });
 
 test("the launcher minimum system version matches the current Codex client requirement", () => {
