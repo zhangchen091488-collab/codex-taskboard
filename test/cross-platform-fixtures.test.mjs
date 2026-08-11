@@ -52,6 +52,9 @@ test("the complete Node test command excludes executable fixture modules on ever
   assert.equal(packageJson.scripts.test, "node scripts/run-tests.mjs");
   assert.match(runner, /readdir\(testDirectory, \{ withFileTypes: true \}\)/);
   assert.match(runner, /entry\.isFile\(\) && entry\.name\.endsWith\("\.test\.mjs"\)/);
-  assert.match(runner, /spawn\(process\.execPath, \["--test", \.\.\.testFiles\]/);
+  assert.match(runner, /isolatedTestNames = new Set\(\["inject-fullheight-regression\.test\.mjs"\]\)/);
+  assert.match(runner, /runNodeTests\(concurrentTestFiles\)/);
+  assert.match(runner, /runNodeTests\(isolatedTestFiles\)/);
+  assert.match(runner, /spawn\(process\.execPath, \["--test", \.\.\.files\]/);
   assert.doesNotMatch(runner, /recursive|fixtures/);
 });
