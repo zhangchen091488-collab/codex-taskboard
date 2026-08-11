@@ -120,7 +120,7 @@ $signature = Get-AuthenticodeSignature -LiteralPath $resolvedSetup
 if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
   throw "PR NSIS artifact must be unsigned, got $($signature.Status)"
 }
-if ((Get-TaskboardInstallEntries).Count -ne 0) {
+if (@(Get-TaskboardInstallEntries).Count -ne 0) {
   throw "Runner is not clean: Codex Taskboard is already installed"
 }
 
@@ -181,7 +181,7 @@ try {
     throw "NSIS uninstaller exited with code $($uninstall.ExitCode)"
   }
   for ($attempt = 0; $attempt -lt 50; $attempt += 1) {
-    if ((Get-TaskboardInstallEntries).Count -eq 0 -and -not (Test-Path -LiteralPath $InstallDirectory)) {
+    if (@(Get-TaskboardInstallEntries).Count -eq 0 -and -not (Test-Path -LiteralPath $InstallDirectory)) {
       $uninstallCompleted = $true
       break
     }
