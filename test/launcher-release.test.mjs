@@ -33,6 +33,14 @@ const nodeReadinessSource = await readFile(
   new URL("../shared/taskboard-readiness.mjs", import.meta.url),
   "utf8",
 );
+const rustTransportReadinessSource = await readFile(
+  new URL("../src-tauri/src/transport_readiness.rs", import.meta.url),
+  "utf8",
+);
+const nodeTransportReadinessSource = await readFile(
+  new URL("../shared/codex-transport-readiness.mjs", import.meta.url),
+  "utf8",
+);
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
 const tauriMacosConfig = JSON.parse(await readFile(
   new URL("../src-tauri/tauri.macos.conf.json", import.meta.url),
@@ -131,6 +139,19 @@ test("Windows process-tree lifecycle owns a kill-on-close Job Object", () => {
     launcherSource,
     /CreateJobObjectW|AssignProcessToJobObject|TerminateJobObject|JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/,
   );
+});
+
+test("Windows waits for a nonce-bound private CDP pipe without exposing a debug port", () => {
+  assert.match(windowsPlatformSource, /"--transport-only"/);
+  assert.match(windowsPlatformSource, /"--transport-readiness-file"/);
+  assert.match(windowsPlatformSource, /"--transport-readiness-nonce"/);
+  assert.match(windowsPlatformSource, /pub fn try_wait/);
+  assert.match(launcherSource, /wait_for_transport_readiness/);
+  assert.match(launcherSource, /Duration::from_secs\(35\)/);
+  assert.match(rustTransportReadinessSource, /"pipe"/);
+  assert.match(nodeTransportReadinessSource, /transport: "pipe"/);
+  assert.doesNotMatch(windowsPlatformSource, /remote-debugging-port|0\.0\.0\.0/);
+  assert.doesNotMatch(nodeTransportReadinessSource, /\b(?:token|password|url|port)\b/i);
 });
 
 test("Windows Codex discovery uses package metadata and a recoverable executable picker", () => {

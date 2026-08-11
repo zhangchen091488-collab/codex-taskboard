@@ -603,17 +603,27 @@ fn start_launcher_locked(
         .parent()
         .ok_or_else(|| "无法定位 App 可执行文件目录".to_string())?
         .join("node.exe");
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    state.intentional_stop.store(false, Ordering::SeqCst);
+    let startup_nonce = Uuid::new_v4().to_string();
+    let transport_readiness_path = state
+        .data_directory
+        .join(format!("transport-readiness-{startup_nonce}.json"));
+    if let Err(error) = fs::remove_file(&transport_readiness_path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            return Err("无法清理旧的 Codex transport readiness 文件".into());
+        }
+    }
     let launch_description = platform::codex_launch_description(
         node_path,
         injector_path,
         app_root,
         codex_installation.executable_path.clone(),
         &codex_profiles,
+        transport_readiness_path.clone(),
+        &startup_nonce,
     );
 
-    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
-    state.intentional_stop.store(false, Ordering::SeqCst);
-    let startup_nonce = Uuid::new_v4().to_string();
     update_snapshot(app, state, |snapshot| {
         snapshot.phase = "starting".into();
         snapshot.message = "正在启动独立 Codex Windows 实例…".into();
@@ -624,6 +634,55 @@ fn start_launcher_locked(
         .spawn_suspended(&launch_description)
         .map_err(|error| error.to_string())?;
     let pid = launched.pid();
+    update_snapshot(app, state, |snapshot| {
+        snapshot.phase = "starting".into();
+        snapshot.message = "独立 Codex 已启动，正在建立私有调试通道…".into();
+        snapshot.child_pid = Some(pid);
+    });
+    append_log(
+        state,
+        &format!("Started suspended Windows launcher child {pid} inside its Job Object"),
+    );
+
+    let transport_readiness = transport_readiness::wait_for_transport_readiness(
+        &transport_readiness_path,
+        &startup_nonce,
+        Duration::from_secs(35),
+        || {
+            launched
+                .try_wait()
+                .map(|exit_code| exit_code.is_some())
+                .map_err(|error| error.to_string())
+        },
+    );
+    let readiness_error = match transport_readiness {
+        Ok(transport_readiness::TransportReadiness::Ready) => None,
+        Ok(transport_readiness::TransportReadiness::Failed) => {
+            Some("Codex 私有调试通道初始化失败".to_string())
+        }
+        Err(error) => Some(error),
+    };
+    if let Some(error) = readiness_error {
+        append_log(
+            state,
+            &format!("Windows Codex transport readiness failed: {error}"),
+        );
+        force_process_tree(state, &mut process_tree);
+        let _ = launched.wait();
+        if let Err(release_error) = process_tree.release() {
+            append_log(
+                state,
+                &format!("Windows failed launch tree release failed: {release_error}"),
+            );
+        }
+        update_snapshot(app, state, |snapshot| {
+            snapshot.phase = "error".into();
+            snapshot.message = "无法建立 Codex 私有调试通道，请从托盘重试。".into();
+            snapshot.child_pid = None;
+        });
+        return Err(error);
+    }
+
     *state.child.lock().unwrap() = Some(LauncherChild {
         pid,
         startup_nonce: startup_nonce.clone(),
@@ -631,12 +690,12 @@ fn start_launcher_locked(
     });
     let snapshot = update_snapshot(app, state, |snapshot| {
         snapshot.phase = "starting".into();
-        snapshot.message = "独立 Codex 已启动，等待调试通道接入…".into();
+        snapshot.message = "Codex 私有调试通道已连接，等待任务面板注入…".into();
         snapshot.child_pid = Some(pid);
     });
     append_log(
         state,
-        &format!("Started suspended Windows launcher child {pid} inside its Job Object"),
+        &format!("Windows Codex private CDP pipe is ready for child {pid}"),
     );
 
     let event_app = app.clone();

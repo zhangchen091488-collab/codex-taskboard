@@ -16,7 +16,9 @@ use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use windows_sys::core::PWSTR;
 use windows_sys::Win32::{
-    Foundation::{GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0},
+    Foundation::{
+        GetLastError, ERROR_INSUFFICIENT_BUFFER, ERROR_SUCCESS, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    },
     Storage::Packaging::Appx::{
         FindPackagesByPackageFamily, FormatApplicationUserModelId, GetPackagePathByFullName,
         PackageFamilyNameFromId, PACKAGE_FILTER_HEAD, PACKAGE_ID,
@@ -76,13 +78,7 @@ impl WindowsProcessWaiter {
         self.pid
     }
 
-    pub fn wait(self) -> Result<u32, ProcessTreeError> {
-        if unsafe { WaitForSingleObject(raw_handle(&self.process), INFINITE) } != WAIT_OBJECT_0 {
-            return Err(last_platform_error(
-                "wait_root",
-                "could not wait for the launcher process",
-            ));
-        }
+    fn exit_code(&self) -> Result<u32, ProcessTreeError> {
         let mut exit_code = 0;
         if unsafe { GetExitCodeProcess(raw_handle(&self.process), &mut exit_code) } == 0 {
             return Err(last_platform_error(
@@ -91,6 +87,27 @@ impl WindowsProcessWaiter {
             ));
         }
         Ok(exit_code)
+    }
+
+    pub fn try_wait(&self) -> Result<Option<u32>, ProcessTreeError> {
+        match unsafe { WaitForSingleObject(raw_handle(&self.process), 0) } {
+            WAIT_OBJECT_0 => self.exit_code().map(Some),
+            WAIT_TIMEOUT => Ok(None),
+            _ => Err(last_platform_error(
+                "wait_root",
+                "could not poll the launcher process",
+            )),
+        }
+    }
+
+    pub fn wait(self) -> Result<u32, ProcessTreeError> {
+        if unsafe { WaitForSingleObject(raw_handle(&self.process), INFINITE) } != WAIT_OBJECT_0 {
+            return Err(last_platform_error(
+                "wait_root",
+                "could not wait for the launcher process",
+            ));
+        }
+        self.exit_code()
     }
 }
 
@@ -114,18 +131,24 @@ pub fn codex_launch_description(
     app_root: PathBuf,
     codex_executable_path: PathBuf,
     profiles: &CodexProfileDirectories,
+    readiness_path: PathBuf,
+    startup_nonce: &str,
 ) -> WindowsLaunchDescription {
     WindowsLaunchDescription {
         executable_path: node_path,
         arguments: vec![
             injector_path.into_os_string(),
-            "--launch-only".into(),
+            "--transport-only".into(),
             "--app-path".into(),
             codex_executable_path.into_os_string(),
             "--profile-path".into(),
             profiles.independent.clone().into_os_string(),
             "--source-profile-path".into(),
             profiles.source.clone().into_os_string(),
+            "--transport-readiness-file".into(),
+            readiness_path.into_os_string(),
+            "--transport-readiness-nonce".into(),
+            startup_nonce.into(),
         ],
         current_directory: app_root,
         environment: sanitized_launch_environment(env::vars_os()),
@@ -937,7 +960,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_launch_description_uses_launch_only_and_explicit_profile_arguments() {
+    fn codex_launch_description_uses_transport_only_with_nonce_bound_readiness() {
         let profiles = CodexProfileDirectories {
             independent: PathBuf::from(r"C:\Users\示例 User\Taskboard\codex-profile"),
             source: PathBuf::from(r"C:\Users\示例 User\AppData\Roaming\Codex"),
@@ -948,9 +971,11 @@ mod tests {
             PathBuf::from(r"C:\Program Files\Taskboard\resources\app"),
             PathBuf::from(r"C:\Program Files\WindowsApps\OpenAI.Codex\app\ChatGPT.exe"),
             &profiles,
+            PathBuf::from(r"C:\Users\示例 User\Taskboard\transport ready.json"),
+            "00000000-0000-4000-8000-000000000053",
         );
 
-        assert_eq!(description.arguments[1], "--launch-only");
+        assert_eq!(description.arguments[1], "--transport-only");
         assert_eq!(description.arguments[2], "--app-path");
         assert_eq!(description.arguments[4], "--profile-path");
         assert_eq!(
@@ -959,6 +984,16 @@ mod tests {
         );
         assert_eq!(description.arguments[6], "--source-profile-path");
         assert_eq!(PathBuf::from(&description.arguments[7]), profiles.source);
+        assert_eq!(description.arguments[8], "--transport-readiness-file");
+        assert_eq!(
+            PathBuf::from(&description.arguments[9]),
+            PathBuf::from(r"C:\Users\示例 User\Taskboard\transport ready.json")
+        );
+        assert_eq!(description.arguments[10], "--transport-readiness-nonce");
+        assert_eq!(
+            description.arguments[11],
+            "00000000-0000-4000-8000-000000000053"
+        );
         assert!(!description
             .arguments
             .iter()
@@ -982,6 +1017,26 @@ mod tests {
             ]))
             .unwrap();
         assert!(launched.pid() > 0);
+        assert_eq!(launched.wait().unwrap(), 0);
+        assert!(matches!(
+            tree.stop_gracefully(Duration::from_secs(1)).unwrap(),
+            StopResult::AlreadyExited | StopResult::Exited
+        ));
+        tree.release().unwrap();
+    }
+
+    #[test]
+    fn suspended_launch_can_be_polled_before_its_normal_exit() {
+        let mut tree = WindowsProcessTree::create().unwrap();
+        let launched = tree
+            .spawn_suspended(&cmd_description([
+                "/D".into(),
+                "/S".into(),
+                "/C".into(),
+                "ping -n 2 127.0.0.1 >NUL".into(),
+            ]))
+            .unwrap();
+        assert_eq!(launched.try_wait().unwrap(), None);
         assert_eq!(launched.wait().unwrap(), 0);
         assert!(matches!(
             tree.stop_gracefully(Duration::from_secs(1)).unwrap(),
