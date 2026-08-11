@@ -87,6 +87,9 @@ jobs:
           if ($version -ne "v22.23.2") {
             throw "Unexpected Windows Node sidecar version: $version"
           }
+      - name: Verify the Windows taskctl wrapper
+        shell: pwsh
+        run: .\test\windows-taskctl-wrapper.ps1 -ProjectRoot .
       - name: Prepare check-only Windows icon placeholder
         shell: pwsh
         run: |

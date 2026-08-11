@@ -340,6 +340,44 @@ exec "$CONTENTS_DIR/MacOS/node" "$CONTENTS_DIR/Resources/app/cli/taskctl.mjs" "$
   await chmod(taskctlPath, 0o755);
 }
 
+export function windowsTaskctlWrapper() {
+  return [
+    "@echo off",
+    "setlocal",
+    'for %%I in ("%~dp0..") do set "APP_DIR=%%~fI"',
+    'set "NODE_EXE=%APP_DIR%\\node.exe"',
+    'set "TASKCTL_CLI=%APP_DIR%\\app\\cli\\taskctl.mjs"',
+    'if not exist "%NODE_EXE%" (',
+    '  >&2 echo Codex Taskboard Node sidecar was not found: "%NODE_EXE%"',
+    "  exit /b 1",
+    ")",
+    'if not exist "%TASKCTL_CLI%" (',
+    '  >&2 echo Codex Taskboard CLI was not found: "%TASKCTL_CLI%"',
+    "  exit /b 1",
+    ")",
+    "if not defined CODEX_TASKBOARD_DATA_DIR (",
+    "  if not defined APPDATA (",
+    "    >&2 echo APPDATA is required to locate Codex Taskboard data",
+    "    exit /b 1",
+    "  )",
+    '  set "CODEX_TASKBOARD_DATA_DIR=%APPDATA%\\com.chuspeeism.codex-taskboard"',
+    ")",
+    "if not defined CODEX_TASKBOARD_RUNTIME_FILE (",
+    '  set "CODEX_TASKBOARD_RUNTIME_FILE=%CODEX_TASKBOARD_DATA_DIR%\\launcher-runtime.json"',
+    ")",
+    '"%NODE_EXE%" "%TASKCTL_CLI%" %*',
+    'set "TASKCTL_EXIT_CODE=%ERRORLEVEL%"',
+    "endlocal & exit /b %TASKCTL_EXIT_CODE%",
+    "",
+  ].join("\r\n");
+}
+
+async function prepareWindowsTaskctlWrapper() {
+  const taskctlPath = path.join(resourcesDirectory, "bin", "taskctl.cmd");
+  await mkdir(path.dirname(taskctlPath), { recursive: true });
+  await writeFile(taskctlPath, windowsTaskctlWrapper(), "utf8");
+}
+
 async function prepareMacos(target) {
   if (process.platform !== "darwin") {
     throw new Error("Codex Taskboard for macOS must be prepared on macOS");
@@ -358,6 +396,7 @@ async function prepareMacos(target) {
 async function prepareWindows(target) {
   await mkdir(runtimeCacheDirectory, { recursive: true });
   await copyApplicationResources();
+  await prepareWindowsTaskctlWrapper();
   try {
     await prepareWindowsNodeRuntime();
   } finally {

@@ -10,6 +10,7 @@ import {
   dispatchPreparation,
   ensureVerifiedArchive,
   parsePrepareArguments,
+  windowsTaskctlWrapper,
   windowsZipExtractionCommand,
 } from "../scripts/prepare-tauri-app.mjs";
 
@@ -199,4 +200,22 @@ test("PE validation accepts only x86_64 Windows executables", () => {
     () => assertWindowsX64Pe(Buffer.from("not an executable"), "fixture.exe"),
     /not a valid PE executable/,
   );
+});
+
+test("Windows taskctl wrapper resolves only packaged files and preserves CLI behavior", () => {
+  const wrapper = windowsTaskctlWrapper();
+  assert.equal(wrapper.replaceAll("\r\n", "").includes("\n"), false);
+  assert.match(wrapper, /for %%I in \("%~dp0\.\."\) do set "APP_DIR=%%~fI"/);
+  assert.match(wrapper, /set "NODE_EXE=%APP_DIR%\\node\.exe"/);
+  assert.match(wrapper, /set "TASKCTL_CLI=%APP_DIR%\\app\\cli\\taskctl\.mjs"/);
+  assert.match(
+    wrapper,
+    /set "CODEX_TASKBOARD_DATA_DIR=%APPDATA%\\com\.chuspeeism\.codex-taskboard"/,
+  );
+  assert.match(wrapper, /"%NODE_EXE%" "%TASKCTL_CLI%" %\*/);
+  assert.match(wrapper, /set "TASKCTL_EXIT_CODE=%ERRORLEVEL%"/);
+  assert.match(wrapper, /endlocal & exit \/b %TASKCTL_EXIT_CODE%/);
+  assert.doesNotMatch(wrapper, /\bwhere(?:\.exe)?\s+node\b/i);
+  assert.doesNotMatch(wrapper, /(?:^|\r\n)\s*(?:call\s+)?node(?:\.exe)?(?:\s|")/im);
+  assert.doesNotMatch(wrapper, /Users\\|workspace\\|Program Files/i);
 });
