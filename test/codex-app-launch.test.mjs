@@ -142,7 +142,9 @@ test("launch-only failure releases the profile lease and exits with a recoverabl
 });
 
 test("launch-only starts one isolated app with only the profile argument", {
-  skip: process.platform === "win32",
+  skip: process.platform === "win32"
+    ? "Windows executable launch is covered by native suspended-launch and Job Object tests"
+    : false,
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex launch success-示例 "));
   const appPath = path.join(root, "Fake ChatGPT.app");

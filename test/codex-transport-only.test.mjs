@@ -156,7 +156,9 @@ test("transport-only treats Codex exit during handshake as a terminal failure", 
 });
 
 test("transport-only CLI completes a real private-pipe handshake with Unicode paths", {
-  skip: process.platform === "win32",
+  skip: process.platform === "win32"
+    ? "Windows private-pipe launch is owned by the native launcher integration"
+    : false,
 }, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codex transport-only-示例 "));
   const appPath = path.join(root, "Fake ChatGPT.app");

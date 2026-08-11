@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHmac } from "node:crypto";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { findChromiumExecutable } from "./helpers/chromium-executable.mjs";
 
 const execFileAsync = promisify(execFile);
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -26,25 +27,6 @@ const embeddedHostSource = await readFile(
   "utf8",
 );
 const embeddedHostDataUrl = `data:text/javascript;base64,${Buffer.from(embeddedHostSource).toString("base64")}`;
-
-async function chromeExecutable() {
-  const candidates = [
-    process.env.CHROME_PATH,
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-  ].filter(Boolean);
-  for (const candidate of candidates) {
-    try {
-      await access(candidate);
-      return candidate;
-    } catch (_) {}
-  }
-  return null;
-}
 
 function fixtureHtml(origin) {
   const encodedSource = Buffer.from(source).toString("base64");
@@ -229,7 +211,7 @@ function fixtureHtml(origin) {
 }
 
 test("Taskboard fills the workspace, opens HTTPS links and revokes hostile iframe navigation", async (t) => {
-  const chrome = await chromeExecutable();
+  const chrome = await findChromiumExecutable();
   if (!chrome) {
     t.skip("Chrome or Chromium is not installed");
     return;
