@@ -13,6 +13,9 @@ test("release readiness remains NO-GO until remote and Windows evidence exists",
   assert.match(audit, /Windows runtime has not run on Windows 11 x64/);
   assert.match(audit, /Seven-stage install\/update\/uninstall matrix/);
   assert.match(audit, /Production macOS signing\/notarization/);
+  assert.match(audit, /docs\/windows-runtime-validation\.md/);
+  assert.match(audit, /app:verify:windows-runtime/);
+  assert.match(audit, /decision: go/);
 });
 
 test("release readiness defines the exact cross-platform assets and unique publisher", () => {

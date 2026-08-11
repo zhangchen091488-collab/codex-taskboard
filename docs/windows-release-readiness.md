@@ -39,6 +39,11 @@ editing a Draft Release or publishing a Release.
   updater/DMG preflight and packaged resource comparison.
 - Windows installation, data/log paths, packaged `taskctl`, update recovery and
   read-only diagnostics are documented in `docs/windows-installation.md`.
+- The deferred runtime gate now has create-only sanitized environment,
+  transport and production cleanup collectors, a strict six-file verifier, an
+  isolated three-transport probe and the local-only sequence in
+  `docs/windows-runtime-validation.md`. These tools do not replace actual
+  Windows execution.
 
 Key local commits for the final delivery slice:
 
@@ -53,6 +58,11 @@ Key local commits for the final delivery slice:
 | `e0768c0` | Exact signed Windows release staging verifier |
 | `fb92cb4` | Trusted cross-platform eight-asset assembly and SHA-256 manifest |
 | `56c863f` | Windows install/troubleshooting guide and documentation tests |
+| `cc46659` | Sanitized six-file Windows runtime evidence contract and verifier |
+| `1214318` | Windows environment and production evidence collectors |
+| `97c60ad` | Disposable-profile dynamic-port, fixed-port and private-pipe probe |
+| `0b21a7b` | Attainable injection evidence and explicit cleanup-scenario confirmation |
+| `d3d18d1` | No-remote-desktop Windows runtime validation runbook |
 
 ## Production blockers
 
@@ -98,9 +108,11 @@ task blocked.
 4. Build unsigned NSIS with `npm run app:build:windows`; let the CI-only verifier
    install, compare bundled bytes/Node version and uninstall it on an ephemeral
    runner. Do not distribute this setup.
-5. Verify official Codex discovery, manual-selection recovery, independent
-   profile migration, private CDP pipe readiness, injection, normal exit,
-   abnormal exit and tray restart on a disposable desktop VM.
+5. Execute `docs/windows-runtime-validation.md` on a disposable desktop VM.
+   Verify official Codex discovery, disposable profiles, dynamic/fixed CDP
+   ports, private pipe, injection, normal exit, abnormal recovery and parent
+   exit, then require `npm run app:verify:windows-runtime --
+   <evidence-directory>` to return `decision: go`.
 6. In the protected signing environment, build signed N and N+1 setup files.
    Require exact Authenticode subject, timestamp, tampered-copy rejection and
    Tauri updater signature verification before installation.
