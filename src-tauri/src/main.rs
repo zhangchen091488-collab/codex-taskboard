@@ -4,7 +4,7 @@ pub mod platform;
 #[cfg(target_os = "macos")]
 mod readiness;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use platform::{
     process_tree::{ProcessTree, StopResult},
     NativeProcessTree,
@@ -12,6 +12,10 @@ use platform::{
 #[cfg(target_os = "macos")]
 use serde::Deserialize;
 use serde::Serialize;
+#[cfg(target_os = "macos")]
+use std::num::NonZeroU32;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+use std::time::Duration;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -24,11 +28,9 @@ use std::{
 #[cfg(target_os = "macos")]
 use std::{
     io::{BufRead, BufReader},
-    num::NonZeroU32,
     process::{Command as StdCommand, Stdio},
     sync::mpsc,
     thread,
-    time::Duration,
 };
 use tauri::{
     menu::{Menu, MenuItem},
@@ -40,7 +42,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 #[cfg(target_os = "macos")]
 use uuid::Uuid;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -63,14 +65,10 @@ struct LauncherPidRecord {
     injector_path: PathBuf,
 }
 
-#[cfg(target_os = "macos")]
 struct LauncherChild {
     pid: u32,
     process_tree: NativeProcessTree,
 }
-
-#[cfg(target_os = "windows")]
-type LauncherChild = u32;
 
 struct LauncherState {
     child: Mutex<Option<LauncherChild>>,
@@ -184,7 +182,6 @@ fn process_tree_for_pid(pid: u32) -> Result<NativeProcessTree, String> {
     Ok(process_tree)
 }
 
-#[cfg(target_os = "macos")]
 fn force_process_tree(state: &LauncherState, process_tree: &mut NativeProcessTree) {
     match process_tree.force_stop(Duration::from_secs(1)) {
         Ok(StopResult::TimedOut) => append_log(state, "Process tree force stop timed out"),
@@ -193,7 +190,6 @@ fn force_process_tree(state: &LauncherState, process_tree: &mut NativeProcessTre
     }
 }
 
-#[cfg(target_os = "macos")]
 fn terminate_process_tree(state: &LauncherState, mut process_tree: NativeProcessTree) {
     match process_tree.stop_gracefully(STOP_TIMEOUT) {
         Ok(StopResult::TimedOut) => force_process_tree(state, &mut process_tree),
@@ -275,19 +271,11 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     state.generation.fetch_add(1, Ordering::SeqCst);
     state.intentional_stop.store(true, Ordering::SeqCst);
     if let Some(child) = state.child.lock().unwrap().take() {
+        append_log(state, &format!("Stopping launcher child {}", child.pid));
+        terminate_process_tree(state, child.process_tree);
         #[cfg(target_os = "macos")]
         {
-            append_log(state, &format!("Stopping launcher child {}", child.pid));
-            terminate_process_tree(state, child.process_tree);
             clear_pid_record(state, child.pid);
-        }
-        #[cfg(target_os = "windows")]
-        {
-            append_log(state, &format!("Stopping launcher child {child}"));
-            append_log(
-                state,
-                "Windows child state exists before the process lifecycle backend is implemented",
-            );
         }
     }
     *state.taskboard_url.lock().unwrap() = None;

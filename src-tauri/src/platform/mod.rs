@@ -33,7 +33,7 @@ pub use macos::{
     MacProcessTree as NativeProcessTree,
 };
 #[cfg(target_os = "windows")]
-pub use windows::{app_directories, configure_app};
+pub use windows::{app_directories, configure_app, WindowsProcessTree as NativeProcessTree};
 
 #[cfg(test)]
 mod tests {

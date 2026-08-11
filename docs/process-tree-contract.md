@@ -17,6 +17,8 @@ Registration is one-shot. An implementation must not adopt or kill a process mer
 
 `release` is only valid before registration or after exit. It must not detach a live tree. This matters on Windows because closing a Job Object configured with `KILL_ON_JOB_CLOSE` terminates its members; it also prevents a macOS implementation from silently abandoning a live process group.
 
+The Windows implementation owns both the Job Object handle and the opened root-process handle. It queries the Job's active-process count rather than treating root exit as tree exit, so descendants remain managed after the root exits. Graceful stop waits for an application-initiated exit; after the caller's deadline, force stop terminates the whole Job. Registration uses a live process handle, never PID-only rediscovery. Launchers that must eliminate the spawn-to-assignment race must create the root suspended, register it, and only then resume it; that launch primitive belongs to the Windows launcher/Codex launch tasks rather than this lifecycle contract.
+
 Platform errors identify the failed operation, retain an optional native error code, and use a sanitized message. Liveness reports a missing root as `false`, not as a platform error. Stop calls are idempotent after exit and return `AlreadyExited`.
 
 ## Call-site mapping

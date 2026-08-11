@@ -99,6 +99,22 @@ test("macOS process-group lifecycle stays behind the ProcessTree implementation"
   assert.doesNotMatch(launcherSource, /libc::kill|terminate_process_group|\.process_group\(0\)/);
 });
 
+test("Windows process-tree lifecycle owns a kill-on-close Job Object", () => {
+  assert.match(windowsPlatformSource, /impl ProcessTree for WindowsProcessTree/);
+  assert.match(windowsPlatformSource, /CreateJobObjectW/);
+  assert.match(windowsPlatformSource, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
+  assert.match(windowsPlatformSource, /AssignProcessToJobObject/);
+  assert.match(windowsPlatformSource, /QueryInformationJobObject/);
+  assert.match(windowsPlatformSource, /TerminateJobObject/);
+  assert.match(windowsPlatformSource, /OwnedHandle/);
+  assert.match(platformSource, /WindowsProcessTree as NativeProcessTree/);
+  assert.match(launcherSource, /process_tree: NativeProcessTree/);
+  assert.doesNotMatch(
+    launcherSource,
+    /CreateJobObjectW|AssignProcessToJobObject|TerminateJobObject|JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/,
+  );
+});
+
 test("the launcher waits for the same strict readiness frame emitted by Node", () => {
   const rustPrefix = rustReadinessSource.match(/LAUNCHER_READINESS_PREFIX: &str = "([^"]+)"/)?.[1];
   const nodePrefix = nodeReadinessSource.match(/TASKBOARD_LAUNCHER_READINESS_PREFIX = "([^"]+)"/)?.[1];
