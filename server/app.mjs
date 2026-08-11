@@ -1324,9 +1324,25 @@ export function resolveServerOptions(options = {}) {
 }
 
 export function resolvePort(value = process.env.CODEX_TASKBOARD_PORT ?? "47823") {
-  const port = typeof value === "number" ? value : Number(value);
+  const port = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim()
+      ? Number(value)
+      : Number.NaN;
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("CODEX_TASKBOARD_PORT must be an integer between 1 and 65535");
+  }
+  return port;
+}
+
+export function resolveLauncherPort(value = process.env.CODEX_TASKBOARD_PORT ?? "0") {
+  const port = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim()
+      ? Number(value)
+      : Number.NaN;
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error("Launcher Taskboard port must be an integer between 0 and 65535");
   }
   return port;
 }

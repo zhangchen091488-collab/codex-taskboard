@@ -1,19 +1,44 @@
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 
-import { createTaskboardServer, resolveHost, resolvePort } from "./app.mjs";
+import {
+  createTaskboardServer,
+  resolveHost,
+  resolveLauncherPort,
+  resolvePort,
+  resolveServerOptions,
+} from "./app.mjs";
 
-export { createTaskboardServer, resolveHost, resolvePort, resolveServerOptions } from "./app.mjs";
+export {
+  createTaskboardServer,
+  resolveHost,
+  resolveLauncherPort,
+  resolvePort,
+  resolveServerOptions,
+} from "./app.mjs";
+
+export function resolveStartupListenOptions(environment = process.env) {
+  const launcherMode = Boolean(String(environment.CODEX_TASKBOARD_INSTANCE_TOKEN ?? "").trim());
+  const host = resolveHost(
+    environment.CODEX_TASKBOARD_HOST ?? (launcherMode ? "127.0.0.1" : "0.0.0.0"),
+  );
+  if (launcherMode && host !== "127.0.0.1") {
+    throw new Error("Launcher Taskboard server must bind to 127.0.0.1");
+  }
+  const rawPort = environment.CODEX_TASKBOARD_PORT ?? (launcherMode ? "0" : "47823");
+  const port = launcherMode ? resolveLauncherPort(rawPort) : resolvePort(rawPort);
+  const fd = environment.CODEX_TASKBOARD_LISTEN_FD === undefined
+    ? null
+    : Number(environment.CODEX_TASKBOARD_LISTEN_FD);
+  return { host, port, fd };
+}
 
 async function main() {
   const app = createTaskboardServer();
-  const host = resolveHost();
-  const listenFd = process.env.CODEX_TASKBOARD_LISTEN_FD === undefined
-    ? null
-    : Number(process.env.CODEX_TASKBOARD_LISTEN_FD);
-  const address = await app.listen({ host, port: resolvePort(), fd: listenFd });
+  const listenOptions = resolveStartupListenOptions();
+  const address = await app.listen(listenOptions);
   console.log(`Codex Taskboard listening on http://127.0.0.1:${address.port}`);
-  if (host === "0.0.0.0") {
+  if (listenOptions.host === "0.0.0.0") {
     const addresses = Object.values(os.networkInterfaces())
       .flat()
       .filter((entry) => entry?.family === "IPv4" && !entry.internal)
