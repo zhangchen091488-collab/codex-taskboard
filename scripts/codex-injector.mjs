@@ -8,6 +8,10 @@ import os from "node:os";
 import path from "node:path";
 
 import { resolveLauncherPort } from "../server/app.mjs";
+import {
+  codexAppExecutablePath,
+  launchIndependentCodexApp,
+} from "../shared/codex-app-launch.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
 import {
@@ -124,6 +128,7 @@ function parseArgs(argv) {
     portExplicit: false,
     cdpPipe: false,
     launch: false,
+    launchOnly: false,
     watch: false,
     open: false,
     refresh: false,
@@ -132,12 +137,15 @@ function parseArgs(argv) {
     startupToken: null,
     daemon: false,
     screenshot: null,
+    profilePath: null,
+    sourceProfilePath: null,
     appPath: "/Applications/ChatGPT.app",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--launch") options.launch = true;
+    else if (arg === "--launch-only") options.launchOnly = true;
     else if (arg === "--cdp-pipe") options.cdpPipe = true;
     else if (arg === "--watch") options.watch = true;
     else if (arg === "--open") options.open = true;
@@ -157,6 +165,16 @@ function parseArgs(argv) {
     }
     else if (arg === "--screenshot") options.screenshot = path.resolve(argv[++index]);
     else if (arg === "--app-path") options.appPath = path.resolve(argv[++index]);
+    else if (arg === "--profile-path") {
+      const value = argv[++index];
+      if (!value) throw new Error("--profile-path requires a value");
+      options.profilePath = path.resolve(value);
+    }
+    else if (arg === "--source-profile-path") {
+      const value = argv[++index];
+      if (!value) throw new Error("--source-profile-path requires a value");
+      options.sourceProfilePath = path.resolve(value);
+    }
     else throw new Error(`Unknown option: ${arg}`);
   }
 
@@ -166,7 +184,52 @@ function parseArgs(argv) {
   if (options.cdpPipe && !options.launch) {
     throw new Error("--cdp-pipe requires --launch");
   }
+  if (
+    options.launchOnly
+    && (
+      options.launch
+      || options.cdpPipe
+      || options.daemon
+      || options.refresh
+      || options.refreshIfRunning
+      || options.watch
+      || options.open
+      || options.attachExisting
+      || options.startupToken
+      || options.portExplicit
+      || options.screenshot
+    )
+  ) {
+    throw new Error("--launch-only cannot be combined with injector or refresh modes");
+  }
+  if (!options.launchOnly && (options.profilePath || options.sourceProfilePath)) {
+    throw new Error("--profile-path options require --launch-only");
+  }
   return options;
+}
+
+async function runLaunchOnly(options) {
+  const profilePath = options.profilePath ?? independentCodexProfilePath;
+  const sourceProfilePath = options.sourceProfilePath ?? sourceCodexProfilePath;
+  await initializeIndependentCodexProfile({
+    sourceProfilePath,
+    destinationProfilePath: profilePath,
+  });
+  const profileLease = await acquireCodexProfileLease(profilePath);
+  let child;
+  try {
+    child = launchIndependentCodexApp({
+      appPath: options.appPath,
+      profilePath,
+    });
+    const exitCode = await new Promise((resolve, reject) => {
+      child.once("error", reject);
+      child.once("exit", (code) => resolve(code));
+    });
+    process.exitCode = exitCode ?? 1;
+  } finally {
+    await profileLease.release();
+  }
 }
 
 async function fetchJson(url) {
@@ -270,18 +333,9 @@ async function removeTaskboardRuntime() {
   }
 }
 
-function codexExecutablePath(appPath) {
-  return path.join(
-    appPath,
-    "Contents",
-    "MacOS",
-    path.basename(appPath, ".app"),
-  );
-}
-
 function launchCodex(appPath, port) {
   return spawn(
-    codexExecutablePath(appPath),
+    codexAppExecutablePath(appPath),
     [
       `--user-data-dir=${independentCodexProfilePath}`,
       "--remote-debugging-address=127.0.0.1",
@@ -297,7 +351,7 @@ function launchCodex(appPath, port) {
 
 async function launchCodexWithPipe(appPath) {
   const child = spawn(
-    codexExecutablePath(appPath),
+    codexAppExecutablePath(appPath),
     [
       `--user-data-dir=${independentCodexProfilePath}`,
       "--remote-debugging-pipe",
@@ -1458,6 +1512,10 @@ ${runtimeSource}`,
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (options.launchOnly) {
+    await runLaunchOnly(options);
+    return;
+  }
   options.startupToken ??= taskboardInstanceToken;
   process.env.CODEX_EXECUTABLE = resolveCodexExecutable({ appPath: options.appPath });
   const cdpVersionUrl = `http://127.0.0.1:${options.port}/json/version`;
