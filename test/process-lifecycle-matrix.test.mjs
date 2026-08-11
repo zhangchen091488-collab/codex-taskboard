@@ -7,6 +7,7 @@ import { test } from "node:test";
 import {
   CODEX_PROCESS_DISPOSITION,
   codexProcessDisposition,
+  createCodexRecoveryBudget,
 } from "../scripts/codex-injector-runtime.mjs";
 import {
   forceStopManagedChildTree,
@@ -133,6 +134,14 @@ test("a crashed Unix tree leader does not hide its orphan before recovery", {
 });
 
 test("Codex normal exit idles while crash and signal exits request recovery", async (t) => {
+  assert.equal(
+    codexProcessDisposition(null),
+    CODEX_PROCESS_DISPOSITION.RUNNING,
+  );
+  assert.equal(
+    codexProcessDisposition(null, true),
+    CODEX_PROCESS_DISPOSITION.RESTART,
+  );
   const scenarios = [
     { name: "normal", args: ["-e", "process.exit(0)"], expected: "idle" },
     { name: "crash", args: ["-e", "process.exit(7)"], expected: "restart" },
@@ -159,4 +168,41 @@ test("Codex normal exit idles while crash and signal exits request recovery", as
     }));
     assert.equal(disposition, scenario.expected);
   }
+});
+
+test("Codex crash recovery is capped per rolling window and becomes available after stability", () => {
+  let currentTime = 1_000;
+  const budget = createCodexRecoveryBudget({
+    maxAttempts: 3,
+    windowMs: 60_000,
+    now: () => currentTime,
+  });
+
+  assert.deepEqual(budget.claim(), {
+    allowed: true,
+    attempt: 1,
+    maxAttempts: 3,
+    retryAfterMs: 0,
+  });
+  currentTime += 1_000;
+  assert.equal(budget.claim().allowed, true);
+  currentTime += 1_000;
+  assert.equal(budget.claim().allowed, true);
+  currentTime += 1_000;
+  assert.deepEqual(budget.claim(), {
+    allowed: false,
+    attempt: 3,
+    maxAttempts: 3,
+    retryAfterMs: 57_000,
+  });
+
+  currentTime = 61_000;
+  assert.deepEqual(budget.claim(), {
+    allowed: true,
+    attempt: 3,
+    maxAttempts: 3,
+    retryAfterMs: 0,
+  });
+  assert.throws(() => createCodexRecoveryBudget({ maxAttempts: 0 }), /positive integer/);
+  assert.throws(() => createCodexRecoveryBudget({ windowMs: 0 }), /window must be positive/);
 });

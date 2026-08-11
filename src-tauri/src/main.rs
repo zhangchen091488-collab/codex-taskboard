@@ -55,6 +55,34 @@ struct LauncherSnapshot {
     child_pid: Option<u32>,
 }
 
+#[cfg(any(target_os = "windows", test))]
+#[derive(Debug, PartialEq, Eq)]
+struct WindowsLauncherExitPresentation {
+    phase: &'static str,
+    message: &'static str,
+    error_dialog: Option<(&'static str, &'static str)>,
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_launcher_exit_presentation(exit_succeeded: bool) -> WindowsLauncherExitPresentation {
+    if exit_succeeded {
+        WindowsLauncherExitPresentation {
+            phase: "stopped",
+            message: "Codex Windows 实例已退出，可从托盘重新启动。",
+            error_dialog: None,
+        }
+    } else {
+        WindowsLauncherExitPresentation {
+            phase: "error",
+            message: "Codex Windows 实例运行异常；请检查日志后从托盘重试。",
+            error_dialog: Some((
+                "Codex Taskboard 运行异常",
+                "Codex Windows 实例意外停止，自动恢复已结束。请检查启动日志后从托盘重新启动。",
+            )),
+        }
+    }
+}
+
 struct LauncherChild {
     pid: u32,
     startup_nonce: String,
@@ -701,8 +729,8 @@ fn start_launcher_locked(
         process_tree,
     });
     let snapshot = update_snapshot(app, state, |snapshot| {
-        snapshot.phase = "starting".into();
-        snapshot.message = "Codex 私有调试通道已连接，等待任务面板注入…".into();
+        snapshot.phase = "running".into();
+        snapshot.message = "任务面板服务与 Codex 私有调试通道已连接。".into();
         snapshot.child_pid = Some(pid);
     });
     append_log(
@@ -729,30 +757,42 @@ fn start_launcher_locked(
         drop(current_child);
         terminate_process_tree(&event_state, managed_child.process_tree);
         clear_pid_record(&event_state, pid, &startup_nonce);
-        let launch_failed = !matches!(&exit, Ok(0));
+        let presentation = windows_launcher_exit_presentation(matches!(&exit, Ok(0)));
         update_snapshot(&event_app, &event_state, |snapshot| {
             snapshot.child_pid = None;
-            match &exit {
-                Ok(0) => {
-                    snapshot.phase = "stopped".into();
-                    snapshot.message = "Codex Windows 实例已退出。".into();
-                }
-                Ok(_) | Err(_) => {
-                    snapshot.phase = "error".into();
-                    snapshot.message =
-                        "Codex Windows 实例启动失败；请检查安装后从托盘重试。".into();
-                }
-            }
+            snapshot.phase = presentation.phase.into();
+            snapshot.message = presentation.message.into();
         });
-        if launch_failed {
-            show_error_dialog(
-                &event_app,
-                "Codex Taskboard 启动失败",
-                "无法启动独立的 Codex Windows 实例。请确认 ChatGPT 已安装，然后从托盘重新启动 Codex。",
-            );
+        if let Some((title, message)) = presentation.error_dialog {
+            show_error_dialog(&event_app, title, message);
         }
     });
     Ok(snapshot)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::windows_launcher_exit_presentation;
+
+    #[test]
+    fn windows_normal_launcher_exit_is_stopped_and_retryable_without_dialog() {
+        let presentation = windows_launcher_exit_presentation(true);
+
+        assert_eq!(presentation.phase, "stopped");
+        assert!(presentation.message.contains("从托盘重新启动"));
+        assert_eq!(presentation.error_dialog, None);
+    }
+
+    #[test]
+    fn windows_abnormal_launcher_exit_is_an_error_with_manual_retry() {
+        let presentation = windows_launcher_exit_presentation(false);
+
+        assert_eq!(presentation.phase, "error");
+        assert!(presentation.message.contains("从托盘重试"));
+        let (title, message) = presentation.error_dialog.unwrap();
+        assert!(title.contains("运行异常"));
+        assert!(message.contains("自动恢复已结束"));
+    }
 }
 
 fn start_launcher(app: &AppHandle, state: &Arc<LauncherState>) -> Result<LauncherSnapshot, String> {

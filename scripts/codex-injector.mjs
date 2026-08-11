@@ -37,6 +37,7 @@ import {
 import {
   CODEX_PROCESS_DISPOSITION,
   codexProcessDisposition,
+  createCodexRecoveryBudget,
   handleHostBindingPayload,
   reconcileInjectionRuntime,
   restartResidentInjector,
@@ -138,6 +139,7 @@ function parseArgs(argv) {
     launch: false,
     launchOnly: false,
     transportOnly: false,
+    boundedLauncherLifecycle: false,
     transportReadinessFile: null,
     transportReadinessNonce: null,
     watch: false,
@@ -158,6 +160,7 @@ function parseArgs(argv) {
     if (arg === "--launch") options.launch = true;
     else if (arg === "--launch-only") options.launchOnly = true;
     else if (arg === "--transport-only") options.transportOnly = true;
+    else if (arg === "--bounded-launcher-lifecycle") options.boundedLauncherLifecycle = true;
     else if (arg === "--cdp-pipe") options.cdpPipe = true;
     else if (arg === "--watch") options.watch = true;
     else if (arg === "--open") options.open = true;
@@ -250,6 +253,14 @@ function parseArgs(argv) {
     if (!options.transportReadinessFile || !options.transportReadinessNonce) {
       throw new Error("transport readiness file and nonce must be provided together");
     }
+  }
+  if (
+    options.boundedLauncherLifecycle
+    && (!options.launch || !options.watch || !options.cdpPipe)
+  ) {
+    throw new Error(
+      "--bounded-launcher-lifecycle requires --launch --watch --cdp-pipe",
+    );
   }
   return options;
 }
@@ -1771,6 +1782,7 @@ async function main() {
     }
     let openPending = options.open && firstResults.length === 0;
     let idleAfterNormalExit = false;
+    const codexRecoveryBudget = createCodexRecoveryBudget();
 
     if (!options.watch) {
       codexProcess?.unref();
@@ -1833,11 +1845,11 @@ async function main() {
             ]);
           }
           if (
-            codexProcessDisposition(codexProcess)
+            codexProcessDisposition(codexProcess, options.launch)
             === CODEX_PROCESS_DISPOSITION.RUNNING
           ) throw error;
         }
-        const disposition = codexProcessDisposition(codexProcess);
+        const disposition = codexProcessDisposition(codexProcess, options.launch);
         if (disposition !== CODEX_PROCESS_DISPOSITION.RUNNING) {
           injectedTargets.forEach((connection) => {
             unregisterQuotaPolicyCdp(connection);
@@ -1848,13 +1860,34 @@ async function main() {
           cdpRuntime = null;
           codexProcess = null;
           if (disposition === CODEX_PROCESS_DISPOSITION.IDLE) {
-            idleAfterNormalExit = true;
+            if (!options.boundedLauncherLifecycle) {
+              idleAfterNormalExit = true;
+              console.error(
+                "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
+              );
+              continue;
+            }
             console.error(
-              "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
+              "Codex exited normally; use the Taskboard tray menu to start it again.",
             );
+            process.exitCode = 0;
+            requestStop();
             continue;
           }
-          console.error("Codex exited unexpectedly; restarting it for the taskboard launcher.");
+          const recovery = options.boundedLauncherLifecycle
+            ? codexRecoveryBudget.claim()
+            : { allowed: true, attempt: 1, maxAttempts: 1 };
+          if (!recovery.allowed) {
+            console.error(
+              `Codex recovery stopped after ${recovery.maxAttempts} attempts in one minute.`,
+            );
+            process.exitCode = 1;
+            requestStop();
+            continue;
+          }
+          console.error(
+            `Codex exited unexpectedly; recovery attempt ${recovery.attempt}/${recovery.maxAttempts}.`,
+          );
           try {
             if (options.cdpPipe) {
               const launched = await launchCodexWithPipe(options.appPath);
@@ -1867,7 +1900,13 @@ async function main() {
             }
             openPending = options.open;
           } catch (restartError) {
-            console.error(`Waiting to restart Codex: ${restartError.message}`);
+            if (options.boundedLauncherLifecycle) {
+              console.error(`Codex recovery failed: ${restartError.message}`);
+              process.exitCode = 1;
+              requestStop();
+            } else {
+              console.error(`Waiting to restart Codex: ${restartError.message}`);
+            }
           }
           continue;
         }

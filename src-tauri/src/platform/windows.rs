@@ -198,6 +198,7 @@ pub fn codex_launch_description(
             "--watch".into(),
             "--open".into(),
             "--cdp-pipe".into(),
+            "--bounded-launcher-lifecycle".into(),
             "--startup-token".into(),
             runtime.instance_token.clone().into(),
             "--app-path".into(),
@@ -1047,20 +1048,21 @@ mod tests {
         assert_eq!(description.arguments[2], "--watch");
         assert_eq!(description.arguments[3], "--open");
         assert_eq!(description.arguments[4], "--cdp-pipe");
-        assert_eq!(description.arguments[5], "--startup-token");
+        assert_eq!(description.arguments[5], "--bounded-launcher-lifecycle");
+        assert_eq!(description.arguments[6], "--startup-token");
         assert_eq!(
-            description.arguments[6],
+            description.arguments[7],
             "00000000-0000-4000-8000-000000000054"
         );
-        assert_eq!(description.arguments[7], "--app-path");
-        assert_eq!(description.arguments[9], "--transport-readiness-file");
+        assert_eq!(description.arguments[8], "--app-path");
+        assert_eq!(description.arguments[10], "--transport-readiness-file");
         assert_eq!(
-            PathBuf::from(&description.arguments[10]),
+            PathBuf::from(&description.arguments[11]),
             PathBuf::from(r"C:\Users\示例 User\Taskboard\transport ready.json")
         );
-        assert_eq!(description.arguments[11], "--transport-readiness-nonce");
+        assert_eq!(description.arguments[12], "--transport-readiness-nonce");
         assert_eq!(
-            description.arguments[12],
+            description.arguments[13],
             "00000000-0000-4000-8000-000000000054"
         );
         let environment = description

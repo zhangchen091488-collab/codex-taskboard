@@ -130,12 +130,18 @@ test("private-pipe injection visits every eligible renderer window and contains 
   assert.match(source, /Waiting for Codex renderer/);
 });
 
-test("Codex exit handling uses one normal-idle versus crash-restart decision", () => {
+test("Codex exit handling stops after normal exit and bounds crash recovery", () => {
   assert.match(runtimeSource, /function codexProcessDisposition/);
-  assert.match(source, /codexProcessDisposition\(codexProcess\)/);
+  assert.match(runtimeSource, /function createCodexRecoveryBudget/);
+  assert.match(source, /codexProcessDisposition\(codexProcess, options\.launch\)/);
   assert.match(source, /CODEX_PROCESS_DISPOSITION\.IDLE/);
   assert.match(source, /CODEX_PROCESS_DISPOSITION\.RUNNING/);
-  assert.match(source, /idleAfterNormalExit = true/);
+  assert.match(source, /const codexRecoveryBudget = createCodexRecoveryBudget\(\)/);
+  assert.match(source, /--bounded-launcher-lifecycle/);
+  assert.match(source, /if \(!options\.boundedLauncherLifecycle\) \{[\s\S]*?idleAfterNormalExit = true/);
+  assert.match(source, /codexRecoveryBudget\.claim\(\)/);
+  assert.match(source, /process\.exitCode = 0;\s*requestStop\(\)/);
+  assert.match(source, /process\.exitCode = 1;\s*requestStop\(\)/);
   assert.doesNotMatch(source, /launchedCodex\?\.exitCode === 0/);
 });
 

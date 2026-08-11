@@ -7,13 +7,55 @@ export const CODEX_PROCESS_DISPOSITION = Object.freeze({
   RESTART: "restart",
 });
 
-export function codexProcessDisposition(child) {
-  if (!child || (child.exitCode === null && child.signalCode === null)) {
+export function codexProcessDisposition(child, missingIsRestart = false) {
+  if (!child) {
+    return missingIsRestart
+      ? CODEX_PROCESS_DISPOSITION.RESTART
+      : CODEX_PROCESS_DISPOSITION.RUNNING;
+  }
+  if (child.exitCode === null && child.signalCode === null) {
     return CODEX_PROCESS_DISPOSITION.RUNNING;
   }
   return child.exitCode === 0 && child.signalCode === null
     ? CODEX_PROCESS_DISPOSITION.IDLE
     : CODEX_PROCESS_DISPOSITION.RESTART;
+}
+
+export function createCodexRecoveryBudget({
+  maxAttempts = 3,
+  windowMs = 60_000,
+  now = Date.now,
+} = {}) {
+  if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
+    throw new Error("Codex recovery max attempts must be a positive integer");
+  }
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    throw new Error("Codex recovery window must be positive");
+  }
+  const attempts = [];
+  return {
+    claim() {
+      const currentTime = now();
+      while (attempts.length > 0 && currentTime - attempts[0] >= windowMs) {
+        attempts.shift();
+      }
+      if (attempts.length >= maxAttempts) {
+        return {
+          allowed: false,
+          attempt: attempts.length,
+          maxAttempts,
+          retryAfterMs: Math.max(0, windowMs - (currentTime - attempts[0])),
+        };
+      }
+      attempts.push(currentTime);
+      return {
+        allowed: true,
+        attempt: attempts.length,
+        maxAttempts,
+        retryAfterMs: 0,
+      };
+    },
+  };
 }
 
 function parseHostRequest(payload, parseAutomationRequest) {
