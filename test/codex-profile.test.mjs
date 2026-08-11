@@ -225,15 +225,13 @@ test("overlapping official and independent profiles are rejected before filesyst
   }
 });
 
-test("a destination symlink cannot redirect initialization into the official profile", {
-  skip: process.platform === "win32",
-}, async () => {
+test("a destination directory link cannot redirect initialization into the official profile", async () => {
   const root = await fixture();
   try {
     const source = path.join(root, "Codex");
     const destination = path.join(root, "codex-profile");
     await mkdir(source, { recursive: true });
-    await symlink(source, destination, "dir");
+    await symlink(source, destination, process.platform === "win32" ? "junction" : "dir");
 
     await assert.rejects(
       initializeIndependentCodexProfile({
