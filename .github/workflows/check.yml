@@ -118,3 +118,19 @@ jobs:
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
       - name: Check the Windows launcher target
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+      - name: Build the real unsigned NSIS bundle
+        run: npm run app:build:windows
+      - name: Verify unsigned NSIS install, payload and uninstall
+        shell: pwsh
+        run: |
+          $setups = @(Get-ChildItem `
+            .\src-tauri\target\x86_64-pc-windows-msvc\release\bundle\nsis\*-setup.exe)
+          if ($setups.Count -ne 1) {
+            throw "Expected one unsigned NSIS setup, found $($setups.Count)"
+          }
+          $version = node -p "require('./package.json').version"
+          .\scripts\verify-windows-nsis-bundle.ps1 `
+            -SetupPath $setups[0].FullName `
+            -ExpectedVersion $version `
+            -EvidencePath .\src-tauri\target\windows-nsis-evidence.json
+          Get-Content .\src-tauri\target\windows-nsis-evidence.json
