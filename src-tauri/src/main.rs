@@ -4,6 +4,7 @@ pub mod launcher_record;
 pub mod platform;
 #[cfg(target_os = "macos")]
 mod readiness;
+mod transport_readiness;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use platform::{
