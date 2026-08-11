@@ -398,8 +398,9 @@ fn start_launcher_locked(
     let instance_token = Uuid::new_v4().to_string();
     let instance_secret = Uuid::new_v4().to_string();
     let version = state.snapshot.lock().unwrap().version.clone();
-    let codex_profile = state.data_directory.join("codex-profile");
-    let codex_source_profile = home_directory.join("Library/Application Support/Codex");
+    let roaming_data_directory = app.path().data_dir().map_err(|error| error.to_string())?;
+    let codex_profiles =
+        platform::codex_profile_directories(&state.data_directory, &roaming_data_directory);
     let mut command = StdCommand::new(&node_path);
     command
         .arg(&injector_path)
@@ -419,11 +420,11 @@ fn start_launcher_locked(
         .env("CODEX_TASKBOARD_VERSION", &version)
         .env(
             "CODEX_TASKBOARD_CODEX_PROFILE",
-            codex_profile.to_string_lossy().as_ref(),
+            codex_profiles.independent.to_string_lossy().as_ref(),
         )
         .env(
             "CODEX_TASKBOARD_CODEX_SOURCE_PROFILE",
-            codex_source_profile.to_string_lossy().as_ref(),
+            codex_profiles.source.to_string_lossy().as_ref(),
         )
         .env("HOST", "127.0.0.1")
         .env("PATH", path_value)
@@ -589,6 +590,9 @@ fn start_launcher_locked(
         .path()
         .resource_dir()
         .map_err(|error| error.to_string())?;
+    let roaming_data_directory = app.path().data_dir().map_err(|error| error.to_string())?;
+    let _codex_profiles =
+        platform::codex_profile_directories(&state.data_directory, &roaming_data_directory);
     let inherited_path = std::env::var_os("PATH");
     platform::launcher_path(&resource_directory, inherited_path.as_deref())
         .map_err(|error| format!("无法构造任务面板 PATH：{error}"))?;

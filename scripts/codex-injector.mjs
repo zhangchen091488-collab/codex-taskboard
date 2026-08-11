@@ -2,13 +2,18 @@
 
 import { spawn } from "node:child_process";
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
-import { chmod, mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import os from "node:os";
 import path from "node:path";
 
 import { resolveLauncherPort } from "../server/app.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import {
+  acquireCodexProfileLease,
+  initializeIndependentCodexProfile,
+} from "../shared/codex-profile.mjs";
 import {
   parseTaskboardAutomationHostRequest,
   reconcileTaskboardAutomation,
@@ -41,7 +46,7 @@ const projectRoot = path.resolve(path.dirname(injectorPath), "..");
 const defaultCodexDebuggingPort = 9229;
 const independentCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_PROFILE
   ? path.resolve(process.env.CODEX_TASKBOARD_CODEX_PROFILE)
-  : "/private/tmp/codex-taskboard-independent-profile-v2";
+  : path.join(os.tmpdir(), "codex-taskboard-independent-profile-v2");
 const sourceCodexProfilePath = process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE
   ? path.resolve(process.env.CODEX_TASKBOARD_CODEX_SOURCE_PROFILE)
   : null;
@@ -262,52 +267,6 @@ async function removeTaskboardRuntime() {
     }
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
-  }
-}
-
-async function importCodexBrowserProfile() {
-  if (!sourceCodexProfilePath || sourceCodexProfilePath === independentCodexProfilePath) return;
-  const markerPath = path.join(
-    independentCodexProfilePath,
-    ".codex-taskboard-browser-profile-imported-v1",
-  );
-  try {
-    await stat(markerPath);
-    return;
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
-
-  const databasePaths = [
-    "Default/Partitions/codex-browser-app/Cookies",
-    "Default/Partitions/codex-browser-app/Login Data",
-    "Default/Partitions/codex-browser-app/Login Data For Account",
-  ];
-  const sources = [];
-  for (const relativePath of databasePaths) {
-    const sourcePath = path.join(sourceCodexProfilePath, relativePath);
-    try {
-      await stat(sourcePath);
-      sources.push({ relativePath, sourcePath });
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
-    }
-  }
-  if (sources.length === 0) return;
-
-  const { DatabaseSync, backup } = await import("node:sqlite");
-  for (const { relativePath, sourcePath } of sources) {
-    const destinationPath = path.join(independentCodexProfilePath, relativePath);
-    await mkdir(path.dirname(destinationPath), { recursive: true });
-    const sourceDatabase = new DatabaseSync(sourcePath, { readOnly: true });
-    try {
-      await backup(sourceDatabase, destinationPath);
-    } finally {
-      sourceDatabase.close();
-    }
-  }
-  if (sources.length === databasePaths.length) {
-    await writeFile(markerPath, "1\n");
   }
 }
 
@@ -1558,6 +1517,7 @@ async function main() {
 
   let codexProcess = null;
   let cdpRuntime = null;
+  let codexProfileLease = null;
   const injectedTargets = new Map();
   let stopping = false;
   let wakeStop;
@@ -1618,6 +1578,8 @@ async function main() {
           ]);
         }
       }
+      await codexProfileLease?.release().catch(() => {});
+      codexProfileLease = null;
       await supervisor.stop();
       await removeTaskboardRuntime();
     })();
@@ -1647,7 +1609,13 @@ async function main() {
     }
     reportLauncherReadiness(initialService.readiness);
     await publishTaskboardRuntime();
-    if (options.launch) await importCodexBrowserProfile();
+    if (options.launch) {
+      await initializeIndependentCodexProfile({
+        sourceProfilePath: sourceCodexProfilePath,
+        destinationProfilePath: independentCodexProfilePath,
+      });
+      codexProfileLease = await acquireCodexProfileLease(independentCodexProfilePath);
+    }
 
     if (options.cdpPipe) {
       const launched = await launchCodexWithPipe(options.appPath);

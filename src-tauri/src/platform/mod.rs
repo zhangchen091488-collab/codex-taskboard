@@ -12,6 +12,22 @@ pub struct AppDirectories {
     pub logs: PathBuf,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct CodexProfileDirectories {
+    pub independent: PathBuf,
+    pub source: PathBuf,
+}
+
+pub fn codex_profile_directories(
+    taskboard_data_directory: &Path,
+    roaming_data_directory: &Path,
+) -> CodexProfileDirectories {
+    CodexProfileDirectories {
+        independent: taskboard_data_directory.join("codex-profile"),
+        source: roaming_data_directory.join("Codex"),
+    }
+}
+
 pub fn launcher_path(
     resource_directory: &Path,
     inherited_path: Option<&OsStr>,
@@ -41,7 +57,7 @@ pub use windows::{
 
 #[cfg(test)]
 mod tests {
-    use super::launcher_path;
+    use super::{codex_profile_directories, launcher_path};
     use std::{env, path::PathBuf};
 
     #[test]
@@ -75,5 +91,20 @@ mod tests {
             env::split_paths(&result).collect::<Vec<_>>(),
             vec![resource_directory.join("bin")]
         );
+    }
+
+    #[test]
+    fn codex_profiles_keep_the_official_source_separate_from_taskboard_data() {
+        #[cfg(target_os = "windows")]
+        let roaming_data = PathBuf::from(r"C:\Users\示例 User\AppData\Roaming");
+        #[cfg(not(target_os = "windows"))]
+        let roaming_data = PathBuf::from("/Users/示例 User/Library/Application Support");
+        let taskboard_data = roaming_data.join("Codex Taskboard");
+
+        let profiles = codex_profile_directories(&taskboard_data, &roaming_data);
+
+        assert_eq!(profiles.source, roaming_data.join("Codex"));
+        assert_eq!(profiles.independent, taskboard_data.join("codex-profile"));
+        assert_ne!(profiles.source, profiles.independent);
     }
 }
