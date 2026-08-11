@@ -19,6 +19,10 @@ const removeScript = await readFile(
   new URL("../scripts/remove-windows-signing-certificate.ps1", import.meta.url),
   "utf8",
 );
+const tamperScript = await readFile(
+  new URL("../scripts/test-windows-authenticode-tamper.ps1", import.meta.url),
+  "utf8",
+);
 const windowsConfig = await readFile(
   new URL("../src-tauri/tauri.windows.conf.json", import.meta.url),
   "utf8",
@@ -98,5 +102,11 @@ test("protected import and verification scripts enforce signer identity and time
   assert.match(removeScript, /\^\[A-F0-9\]\{40\}\$/);
   assert.match(removeScript, /Cert:\\CurrentUser\\My\\\$thumbprint/);
   assert.doesNotMatch(removeScript, /Remove-Item[^\n]*Cert:\\CurrentUser\\My["']?\s+-Recurse/);
+  assert.match(tamperScript, /RUNNER_TEMP/);
+  assert.match(tamperScript, /\$bytes\[2\] = \$bytes\[2\] -bxor 0xff/);
+  assert.match(tamperScript, /verify-windows-authenticode\.ps1/);
+  assert.match(tamperScript, /verification unexpectedly accepted/);
+  assert.match(tamperScript, /finally/);
+  assert.doesNotMatch(tamperScript, /WriteAllBytes\(\$resolvedArtifact/);
   assert.doesNotMatch(windowsConfig, /certificateThumbprint|timestampUrl|signCommand/);
 });
