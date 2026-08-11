@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const testDirectory = path.join(projectRoot, "test");
-const isolatedTestNames = new Set(["inject-fullheight-regression.test.mjs"]);
+const isolatedTestNames = new Set([
+  "inject-fullheight-regression.test.mjs",
+  "task-editor-create-status.test.mjs",
+]);
 const testFiles = (await readdir(testDirectory, { withFileTypes: true }))
   .filter((entry) => entry.isFile() && entry.name.endsWith(".test.mjs"))
   .sort((left, right) => left.name.localeCompare(right.name));
@@ -72,7 +75,8 @@ function runNodeTests(files) {
 }
 
 let exitCode = await runNodeTests(concurrentTestFiles);
-if (exitCode === 0) {
-  exitCode = await runNodeTests(isolatedTestFiles);
+for (const isolatedTestFile of isolatedTestFiles) {
+  if (exitCode !== 0) break;
+  exitCode = await runNodeTests([isolatedTestFile]);
 }
 process.exitCode = exitCode;

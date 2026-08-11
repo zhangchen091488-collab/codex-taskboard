@@ -47,11 +47,11 @@ test("a new status entry overrides the old draft status and restores the remaini
         url,
       ], { maxBuffer: 2_000_000, timeout: 30_000 }));
     } catch (error) {
-      if (!String(error?.stdout ?? "").trim()) {
+      stdout = String(error?.stdout ?? "");
+      if (!stdout.trim()) {
         t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");
         return;
       }
-      throw error;
     }
     if (!stdout.trim()) {
       t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");

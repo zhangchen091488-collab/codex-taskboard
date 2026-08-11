@@ -2,14 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
-const launcherSource = await readFile(
+const launcherSource = (await readFile(
   new URL("../src-tauri/src/main.rs", import.meta.url),
   "utf8",
-);
-const updateStateSource = await readFile(
+)).replaceAll("\r\n", "\n");
+const updateStateSource = (await readFile(
   new URL("../src-tauri/src/update_state.rs", import.meta.url),
   "utf8",
-);
+)).replaceAll("\r\n", "\n");
 
 function functionBody(name, nextName) {
   const start = launcherSource.indexOf(`fn ${name}`);

@@ -52,11 +52,24 @@ test("the complete Node test command excludes executable fixture modules on ever
   assert.equal(packageJson.scripts.test, "node scripts/run-tests.mjs");
   assert.match(runner, /readdir\(testDirectory, \{ withFileTypes: true \}\)/);
   assert.match(runner, /entry\.isFile\(\) && entry\.name\.endsWith\("\.test\.mjs"\)/);
-  assert.match(runner, /isolatedTestNames = new Set\(\["inject-fullheight-regression\.test\.mjs"\]\)/);
+  assert.match(runner, /isolatedTestNames = new Set\(\[[\s\S]*?inject-fullheight-regression\.test\.mjs[\s\S]*?task-editor-create-status\.test\.mjs/);
   assert.match(runner, /runNodeTests\(concurrentTestFiles\)/);
-  assert.match(runner, /runNodeTests\(isolatedTestFiles\)/);
+  assert.match(runner, /for \(const isolatedTestFile of isolatedTestFiles\)/);
+  assert.match(runner, /runNodeTests\(\[isolatedTestFile\]\)/);
   assert.match(runner, /spawn\(process\.execPath, \["--test", \.\.\.files\]/);
   assert.match(runner, /not ok \\d\+ - \(\.\+\)/);
   assert.match(runner, /::error file=scripts\/run-tests\.mjs,title=Node tests failed/);
   assert.doesNotMatch(runner, /recursive|fixtures/);
+});
+
+test("isolated browser regressions validate complete DOM output after a timed Chrome exit", async () => {
+  const fixtures = await Promise.all([
+    source("./inject-fullheight-regression.test.mjs"),
+    source("./task-editor-create-status.test.mjs"),
+  ]);
+  for (const fixture of fixtures) {
+    assert.match(fixture, /stdout = String\(error\?\.stdout \?\? ""\)/);
+    assert.doesNotMatch(fixture, /throw error/);
+    assert.match(fixture, /if \(!stdout\.trim\(\)\)/);
+  }
 });

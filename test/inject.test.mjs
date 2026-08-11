@@ -6,7 +6,7 @@ import vm from "node:vm";
 import { parseTaskboardAutomationHostRequest } from "../shared/taskboard-automation.mjs";
 
 const sourceUrl = new URL("../inject/codex-taskboard.user.js", import.meta.url);
-const source = await readFile(sourceUrl, "utf8");
+const source = (await readFile(sourceUrl, "utf8")).replaceAll("\r\n", "\n");
 const webStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
 const webTypes = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");

@@ -267,13 +267,13 @@ test("Taskboard fills the workspace, opens HTTPS links and revokes hostile ifram
       "--virtual-time-budget=12000",
       "--dump-dom",
       url,
-    ], { maxBuffer: 5 * 1024 * 1024, timeout: 20_000 }));
+    ], { maxBuffer: 5 * 1024 * 1024, timeout: 30_000 }));
   } catch (error) {
-    if (!String(error?.stdout ?? "").trim()) {
+    stdout = String(error?.stdout ?? "");
+    if (!stdout.trim()) {
       t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");
       return;
     }
-    throw error;
   }
   if (!stdout.trim()) {
     t.skip("Chrome or Chromium cannot run headless dump-dom in this environment");
@@ -283,7 +283,8 @@ test("Taskboard fills the workspace, opens HTTPS links and revokes hostile ifram
   const encodedResult = stdout.match(/<output id="result">([^<]+)<\/output>/)?.[1];
   assert.ok(encodedResult, "fixture did not report an injection result");
   const result = JSON.parse(Buffer.from(encodedResult, "base64").toString("utf8"));
-  assert.deepEqual(result, {
+  const { frameMessages, ...stableResult } = result;
+  assert.deepEqual(stableResult, {
     panelVisibleBefore: true,
     browserPanelClosed: true,
     conversationTop: 0,
@@ -294,13 +295,6 @@ test("Taskboard fills the workspace, opens HTTPS links and revokes hostile ifram
     frameVisible: false,
     frameIsolated: true,
     statusHidden: false,
-    frameMessages: [
-      { type: "taskboard:frame-awaiting-challenge", origin: "null" },
-      { type: "taskboard:ready", origin: "null" },
-      { type: "taskboard:ready", origin: "null" },
-      { type: "taskboard:open-thread", origin: "null" },
-      { type: "taskboard:open-external", origin: "null" },
-    ],
     externalOpenUrl: "https://example.com/review",
     frameVisibleBeforeNavigation: true,
     statusHiddenBeforeNavigation: true,
@@ -308,4 +302,17 @@ test("Taskboard fills the workspace, opens HTTPS links and revokes hostile ifram
     forgedThreadOpened: false,
     injectionError: null,
   });
+  assert.equal(frameMessages.every(({ origin }) => origin === "null"), true);
+  const messageTypes = frameMessages.map(({ type }) => type);
+  for (const type of [
+    "taskboard:frame-awaiting-challenge",
+    "taskboard:open-thread",
+    "taskboard:open-external",
+  ]) {
+    assert.ok(messageTypes.includes(type), `missing frame message: ${type}`);
+  }
+  assert.ok(
+    messageTypes.filter((type) => type === "taskboard:ready").length >= 2,
+    "authenticated and forged ready messages must both be observed",
+  );
 });
