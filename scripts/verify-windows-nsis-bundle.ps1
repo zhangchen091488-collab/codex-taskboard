@@ -37,6 +37,20 @@ function String-Property([AllowNull()]$InputObject, [string]$Name) {
   return [string]$value
 }
 
+function ConvertFrom-RegistryPathValue([AllowNull()][string]$Value) {
+  if ($null -eq $Value) {
+    return $null
+  }
+  $trimmed = $Value.Trim()
+  while ($trimmed.StartsWith('"')) {
+    $trimmed = $trimmed.Substring(1)
+  }
+  while ($trimmed.EndsWith('"')) {
+    $trimmed = $trimmed.Substring(0, $trimmed.Length - 1)
+  }
+  return $trimmed
+}
+
 function Get-TaskboardInstallEntries {
   $roots = @(
     @{ hive = "HKCU"; path = "Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall" },
@@ -80,6 +94,7 @@ function Resolve-Uninstaller($Entry, [string]$InstallDirectory) {
   if ([string]::IsNullOrWhiteSpace($candidate)) {
     throw "Could not parse the installed NSIS UninstallString"
   }
+  $candidate = ConvertFrom-RegistryPathValue $candidate
   $resolved = (Resolve-Path -LiteralPath $candidate).Path
   $installRoot = [System.IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\') + '\'
   if (-not [System.IO.Path]::GetFullPath($resolved).StartsWith(
@@ -148,7 +163,7 @@ try {
     throw "Installed version mismatch: $($installedEntry.displayVersion)"
   }
 
-  $InstallDirectory = $installedEntry.installLocation
+  $InstallDirectory = ConvertFrom-RegistryPathValue $installedEntry.installLocation
   if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
     throw "Installed NSIS entry has no InstallLocation"
   }
@@ -234,7 +249,7 @@ try {
   if ($installAttempted -and -not $uninstallCompleted) {
     $remaining = @(Get-TaskboardInstallEntries)
     if ($remaining.Count -eq 1 -and $remaining[0].hive -eq "HKCU") {
-      $cleanupDirectory = $remaining[0].installLocation
+      $cleanupDirectory = ConvertFrom-RegistryPathValue $remaining[0].installLocation
       if (-not [string]::IsNullOrWhiteSpace($cleanupDirectory)) {
         try {
           $cleanup = Resolve-Uninstaller $remaining[0] $cleanupDirectory

@@ -36,6 +36,9 @@ test("NSIS verifier is CI-only, exact-targeted and compares installed payload by
   assert.match(verifier, /if \(\$null -eq \$InputObject\)/);
   assert.match(verifier, /@\(Get-TaskboardInstallEntries\)\.Count -ne 0/);
   assert.match(verifier, /@\(Get-TaskboardInstallEntries\)\.Count -eq 0/);
+  assert.match(verifier, /function ConvertFrom-RegistryPathValue/);
+  assert.match(verifier, /ConvertFrom-RegistryPathValue \$installedEntry\.installLocation/);
+  assert.match(verifier, /ConvertFrom-RegistryPathValue \$candidate/);
   assert.match(verifier, /hive -ne "HKCU"/);
   assert.match(verifier, /SignatureStatus\]::NotSigned/);
   assert.match(verifier, /Installed bundle file differs from staged source/);
