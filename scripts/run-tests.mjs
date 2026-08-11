@@ -31,6 +31,8 @@ if (isolatedTestFiles.length !== isolatedTestNames.size) {
 function runNodeTests(files) {
   return new Promise((resolve, reject) => {
     const failingTests = new Set();
+    const maxDiagnosticCharacters = 8_000;
+    let recentOutput = "";
     let pendingOutput = "";
     const child = spawn(process.execPath, ["--test", ...files], {
       cwd: projectRoot,
@@ -38,6 +40,7 @@ function runNodeTests(files) {
       stdio: ["inherit", "pipe", "pipe"],
     });
     const inspectOutput = (chunk, flush = false) => {
+      recentOutput = `${recentOutput}${chunk}`.slice(-maxDiagnosticCharacters);
       pendingOutput += chunk;
       const lines = pendingOutput.split(/\r?\n/);
       pendingOutput = flush ? "" : (lines.pop() ?? "");
@@ -60,9 +63,11 @@ function runNodeTests(files) {
         return;
       }
       if (code !== 0 && process.env.GITHUB_ACTIONS === "true") {
-        const detail = failingTests.size > 0
+        const summary = failingTests.size > 0
           ? `Failing Node tests: ${[...failingTests].join(", ")}`
           : "The Node test process failed without a TAP test name";
+        const diagnostic = recentOutput.trim();
+        const detail = diagnostic ? `${summary}\n\n${diagnostic}` : summary;
         const escaped = detail
           .replaceAll("%", "%25")
           .replaceAll("\r", "%0D")

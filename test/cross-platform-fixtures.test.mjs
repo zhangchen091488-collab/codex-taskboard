@@ -58,6 +58,8 @@ test("the complete Node test command excludes executable fixture modules on ever
   assert.match(runner, /runNodeTests\(\[isolatedTestFile\]\)/);
   assert.match(runner, /spawn\(process\.execPath, \["--test", \.\.\.files\]/);
   assert.match(runner, /not ok \\d\+ - \(\.\+\)/);
+  assert.match(runner, /maxDiagnosticCharacters = 8_000/);
+  assert.match(runner, /recentOutput = `\$\{recentOutput\}\$\{chunk\}`\.slice\(-maxDiagnosticCharacters\)/);
   assert.match(runner, /::error file=scripts\/run-tests\.mjs,title=Node tests failed/);
   assert.doesNotMatch(runner, /recursive|fixtures/);
 });
