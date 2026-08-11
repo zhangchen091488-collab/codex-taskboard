@@ -23,6 +23,7 @@
     "app:build:windows": "node scripts/build-tauri-app.mjs --target x86_64-pc-windows-msvc",
     "app:preflight": "node scripts/preflight-macos-app.mjs",
     "app:verify-packaged-taskctl": "node scripts/verify-packaged-taskctl.mjs",
+    "app:verify:windows-resources": "node scripts/verify-windows-resources.mjs",
     "app:verify-release": "node scripts/verify-macos-release.mjs",
     "tauri": "tauri",
     "dev": "node scripts/dev.mjs",

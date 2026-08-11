@@ -85,6 +85,7 @@ jobs:
           if ($version -ne "v22.23.2") {
             throw "Unexpected Windows Node sidecar version: $version"
           }
+          npm run app:verify:windows-resources
       - name: Verify the Windows taskctl wrapper
         shell: pwsh
         run: .\test\windows-taskctl-wrapper.ps1 -ProjectRoot .

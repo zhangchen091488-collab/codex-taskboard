@@ -27,7 +27,7 @@ const nodeArchiveSha256 = {
 const windowsNodeArchiveName = `node-v${nodeVersion}-win-x64.zip`;
 const windowsNodeArchiveSha256 =
   "1177b4137ba5adaa56354ae40f1080c7450e8ae09cecb47da459d1c52ac99f97";
-const windowsNodeExecutableSha256 =
+export const WINDOWS_NODE_EXECUTABLE_SHA256 =
   "0d0f5e39f9f3d9587bc19f73eab3c2c9c4903fd02d6dbf9c853dd81b3d95fad4";
 const targetsByPlatform = new Map([
   ["darwin", new Set([
@@ -225,9 +225,9 @@ async function prepareWindowsNodeRuntime() {
   try {
     await copyFile(sourceNodePath, temporaryNodePath);
     const executableChecksum = await sha256(temporaryNodePath);
-    if (executableChecksum !== windowsNodeExecutableSha256) {
+    if (executableChecksum !== WINDOWS_NODE_EXECUTABLE_SHA256) {
       throw new Error(
-        `Checksum verification failed for node.exe: expected ${windowsNodeExecutableSha256}, ` +
+        `Checksum verification failed for node.exe: expected ${WINDOWS_NODE_EXECUTABLE_SHA256}, ` +
           `received ${executableChecksum}`,
       );
     }
