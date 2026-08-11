@@ -32,6 +32,19 @@ test("the launcher keeps OS-specific app setup behind one platform boundary", ()
   assert.doesNotMatch(windowsPlatformSource, /ActivationPolicy/);
 });
 
+test("the launcher uses standard app directories without abandoning existing macOS data", () => {
+  const [macosProductionSource] = macosPlatformSource.split("#[cfg(test)]");
+
+  assert.match(launcherSource, /platform::app_directories\(app\)/);
+  assert.doesNotMatch(launcherSource, /Library\/Application Support\/Codex Taskboard/);
+  assert.match(windowsPlatformSource, /app\.path\(\)\.app_data_dir\(\)/);
+  assert.match(windowsPlatformSource, /app\.path\(\)\.app_log_dir\(\)/);
+  assert.match(macosPlatformSource, /app\.path\(\)\.app_data_dir\(\)/);
+  assert.match(macosPlatformSource, /app\.path\(\)\.app_log_dir\(\)/);
+  assert.match(macosPlatformSource, /legacy\.exists\(\)/);
+  assert.doesNotMatch(macosProductionSource, /remove_dir_all/);
+});
+
 test("the macOS launcher uses one instance, serialized lifecycle changes, and a private CDP pipe", () => {
   assert.match(launcherSource, /libc::flock/);
   assert.match(launcherSource, /lifecycle: Mutex/);

@@ -747,8 +747,9 @@ fn main() {
                 fs::remove_dir_all(&global_skill)?;
             }
             copy_directory(&bundled_skill, &global_skill)?;
-            let data_directory = home_directory.join("Library/Application Support/Codex Taskboard");
-            let log_directory = home_directory.join("Library/Logs/Codex Taskboard");
+            let app_directories = platform::app_directories(app)?;
+            let data_directory = app_directories.data;
+            let log_directory = app_directories.logs;
             fs::create_dir_all(&data_directory)?;
             fs::create_dir_all(&log_directory)?;
             let Some(instance_lock) = acquire_instance_lock(&data_directory.join("launcher.lock"))?
