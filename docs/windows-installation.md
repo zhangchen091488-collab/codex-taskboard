@@ -164,6 +164,11 @@ cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-wind
 npm run app:build:windows
 ```
 
+不使用远程桌面的环境、三种 Codex transport、正式注入和三类进程清理证据采集步骤见
+[Windows 11 本机运行验收](windows-runtime-validation.md)。安装/更新/卸载的七阶段
+矩阵仍按 [Windows VM 验收矩阵](windows-vm-validation.md) 独立执行，两类证据不能互相
+替代。
+
 `app:build:windows` 生成 unsigned、仅用于 CI/本机验收的 NSIS。受保护签名构建所需
 的 PFX、timestamp 和 updater 私钥边界见
 [Windows Authenticode 策略](windows-signing-policy.md) 与

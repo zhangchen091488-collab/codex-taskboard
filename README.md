@@ -68,7 +68,7 @@ Draft Release 不会成为 GitHub 的 latest Release。审核人批准受保护�
 
 Windows App 使用 current-user NSIS 安装器、内置 Node.js 22.23.2、系统 Evergreen WebView2 和独立 Codex profile。它不会修改官方 Codex 安装；启动器优先从官方 Windows 包元数据发现 `ChatGPT.exe`，失败时允许用户手动选择并保存该位置。
 
-Windows 正式安装包尚未发布。开发/验收人员应从受控来源取得候选 setup，先验证 Authenticode 签名和时间戳，再按 [Windows 安装与故障处理](docs/windows-installation.md) 与 [Windows VM 验收矩阵](docs/windows-vm-validation.md) 操作。Windows 数据在 `%APPDATA%\com.chuspeeism.codex-taskboard`，日志在 `%LOCALAPPDATA%\com.chuspeeism.codex-taskboard\logs`；安装、更新或卸载验证不得删除该数据目录。
+Windows 正式安装包尚未发布。开发/验收人员应从受控来源取得候选 setup，先验证 Authenticode 签名和时间戳，再按 [Windows 安装与故障处理](docs/windows-installation.md)、[Windows 本机运行验收](docs/windows-runtime-validation.md) 与 [Windows VM 验收矩阵](docs/windows-vm-validation.md) 操作。Windows 数据在 `%APPDATA%\com.chuspeeism.codex-taskboard`，日志在 `%LOCALAPPDATA%\com.chuspeeism.codex-taskboard\logs`；安装、更新或卸载验证不得删除该数据目录。
 
 ## 本地开发
 
