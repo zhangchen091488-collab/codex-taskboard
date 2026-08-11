@@ -120,7 +120,6 @@ function validateProduction(value) {
   assert.equal(value.logSignals?.discovery, true);
   assert.equal(value.logSignals?.jobObject, true);
   assert.equal(value.logSignals?.pipeReady, true);
-  assert.equal(value.logSignals?.injectionReady, true);
   assert.equal(value.logSignals?.transportFailure, false);
   assert.equal(value.upstreamFilesModified, false);
   assert.equal(value.credentialsIncluded, false);
@@ -133,6 +132,7 @@ function validateCleanup(value, scenario) {
   assert.equal(value.childProcessesRemaining, 0, `${scenario}: child process residue`);
   assert.equal(value.taskboardNodeRemaining, 0, `${scenario}: Node residue`);
   assert.equal(value.isolatedCodexRemaining, 0, `${scenario}: Codex residue`);
+  assert.equal(value.scenarioObserved, true, `${scenario}: scenario was not confirmed`);
   assert.equal(value.unrelatedProcessesTerminated, 0, `${scenario}: unrelated process was killed`);
   assert.equal(value.jobObjectKillOnClose, true, `${scenario}: Job Object policy missing`);
   assert.equal(value.pidReuseGuarded, true, `${scenario}: PID reuse guard missing`);

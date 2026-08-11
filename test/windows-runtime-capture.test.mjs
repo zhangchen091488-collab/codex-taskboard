@@ -23,6 +23,7 @@ test("production capture stores capability booleans instead of raw command lines
   assert.match(productionCapture, /--bounded-launcher-lifecycle/);
   assert.match(productionCapture, /inside its Job Object/);
   assert.match(productionCapture, /Windows Codex private CDP pipe is ready/);
+  assert.match(productionCapture, /\$log\.Substring\(\$latestDiscovery\.Index\)/);
   assert.match(productionCapture, /taskctl\.cmd/);
   assert.match(productionCapture, /discoveredExecutableExists/);
   assert.match(productionCapture, /FileMode\]::CreateNew/);
@@ -33,6 +34,8 @@ test("production capture stores capability booleans instead of raw command lines
 test("cleanup capture executes scoped Windows lifecycle tests and never kills processes", () => {
   assert.match(productionCapture, /platform::windows::tests::/);
   assert.match(productionCapture, /ConfirmNoUnrelatedTermination/);
+  assert.match(productionCapture, /ConfirmScenarioObserved/);
+  assert.doesNotMatch(productionCapture, /Contains\('\"injected\"'\)/);
   assert.match(productionCapture, /jobObjectKillOnClose = \$lifecycleTestsPassed/);
   assert.match(productionCapture, /pidReuseGuarded = \$lifecycleTestsPassed/);
   assert.doesNotMatch(

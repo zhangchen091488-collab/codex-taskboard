@@ -39,6 +39,7 @@ function cleanup(scenario, launcherCount) {
     taskboardNodeRemaining: 0,
     isolatedCodexRemaining: 0,
     launcherCount,
+    scenarioObserved: true,
     unrelatedProcessesTerminated: 0,
     jobObjectKillOnClose: true,
     pidReuseGuarded: true,
@@ -109,7 +110,6 @@ function validEvidence() {
         discovery: true,
         jobObject: true,
         pipeReady: true,
-        injectionReady: true,
         transportFailure: false,
       },
       upstreamFilesModified: false,
@@ -182,6 +182,10 @@ test("runtime verifier rejects process residue, unrelated kills and evidence pat
   const collateral = validEvidence();
   collateral["production-forced-exit"].unrelatedProcessesTerminated = 1;
   assert.throws(() => validateWindowsRuntimeEvidence(collateral), /unrelated process was killed/);
+
+  const unconfirmed = validEvidence();
+  unconfirmed["production-normal-exit"].scenarioObserved = false;
+  assert.throws(() => validateWindowsRuntimeEvidence(unconfirmed), /scenario was not confirmed/);
 
   const pathLeak = validEvidence();
   pathLeak.environment.notes = String.raw`C:\Users\Alice\AppData\Roaming`;

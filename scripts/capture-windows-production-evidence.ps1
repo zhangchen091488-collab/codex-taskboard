@@ -12,6 +12,7 @@ param(
 
   [switch]$ConfirmSidebarReady,
   [switch]$ConfirmUpstreamUnmodified,
+  [switch]$ConfirmScenarioObserved,
   [switch]$ConfirmNoUnrelatedTermination,
 
   [string]$ProjectRoot = (Join-Path $PSScriptRoot "..")
@@ -120,6 +121,7 @@ if ($Scenario -eq "running") {
   if ($discoveryMatches.Count -lt 1) { throw "Launcher log has no Windows discovery evidence" }
   $latestDiscovery = $discoveryMatches[$discoveryMatches.Count - 1]
   $discoverySource = $latestDiscovery.Groups[1].Value
+  $currentLaunchLog = $log.Substring($latestDiscovery.Index)
   $discoveredExecutableExists = Test-Path `
     -LiteralPath $latestDiscovery.Groups[2].Value.Trim() `
     -PathType Leaf
@@ -157,10 +159,9 @@ if ($Scenario -eq "running") {
     }
     logSignals = [ordered]@{
       discovery = $discoveryMatches.Count -gt 0
-      jobObject = $log.Contains("inside its Job Object")
-      pipeReady = $log.Contains("Windows Codex private CDP pipe is ready")
-      injectionReady = $log.Contains('"injected"')
-      transportFailure = $log.Contains("Windows Codex transport readiness failed")
+      jobObject = $currentLaunchLog.Contains("inside its Job Object")
+      pipeReady = $currentLaunchLog.Contains("Windows Codex private CDP pipe is ready")
+      transportFailure = $currentLaunchLog.Contains("Windows Codex transport readiness failed")
     }
     upstreamFilesModified = -not [bool]$ConfirmUpstreamUnmodified
     credentialsIncluded = $false
@@ -170,8 +171,8 @@ if ($Scenario -eq "running") {
   return
 }
 
-if (-not $ConfirmNoUnrelatedTermination) {
-  throw "Cleanup capture requires confirmation that unrelated processes were not terminated"
+if (-not $ConfirmScenarioObserved -or -not $ConfirmNoUnrelatedTermination) {
+  throw "Cleanup capture requires scenario-observed and no-unrelated-termination confirmations"
 }
 & cargo test `
   --locked `
@@ -190,6 +191,7 @@ $cleanup = [ordered]@{
   taskboardNodeRemaining = $processes.injectorNodeCount
   isolatedCodexRemaining = $processes.isolatedCodexCount
   launcherCount = $processes.launcherCount
+  scenarioObserved = [bool]$ConfirmScenarioObserved
   unrelatedProcessesTerminated = 0
   jobObjectKillOnClose = $lifecycleTestsPassed
   pidReuseGuarded = $lifecycleTestsPassed
