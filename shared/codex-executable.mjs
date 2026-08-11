@@ -1,21 +1,54 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD";
+
 function executableFile(candidate) {
   try {
+    if (!statSync(candidate).isFile()) return false;
     accessSync(candidate, constants.X_OK);
-    return candidate;
+    return true;
   } catch {
-    return null;
+    return false;
   }
 }
 
-function executableOnPath(env) {
-  for (const directory of (env.PATH || "").split(path.delimiter)) {
+function executableNames(env, platform) {
+  if (platform !== "win32") return ["codex"];
+
+  const configured = typeof env.PATHEXT === "string" && env.PATHEXT.trim()
+    ? env.PATHEXT
+    : DEFAULT_WINDOWS_PATHEXT;
+  const extensions = [];
+  const seen = new Set();
+  for (const value of configured.split(";")) {
+    const extension = value.trim().startsWith(".") ? value.trim() : `.${value.trim()}`;
+    if (!/^\.[a-z0-9]+$/i.test(extension)) continue;
+    const key = extension.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    extensions.push(extension);
+  }
+  return extensions.map((extension) => `codex${extension}`);
+}
+
+function pathDirectory(value, platform) {
+  if (platform === "win32" && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1);
+  }
+  return value;
+}
+
+function executableOnPath(env, platform, isExecutable) {
+  const pathApi = platform === "win32" ? path.win32 : path.posix;
+  for (const value of String(env.PATH || "").split(pathApi.delimiter)) {
+    const directory = pathDirectory(value, platform);
     if (!directory) continue;
-    const candidate = executableFile(path.join(directory, "codex"));
-    if (candidate) return candidate;
+    for (const name of executableNames(env, platform)) {
+      const candidate = pathApi.join(directory, name);
+      if (isExecutable(candidate)) return candidate;
+    }
   }
   return null;
 }
@@ -30,24 +63,23 @@ export function resolveCodexExecutable({
   env = process.env,
   platform = process.platform,
   homeDirectory = os.homedir(),
+  isExecutable = executableFile,
 } = {}) {
   if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
 
-  if (appPath) {
-    const bundled = executableFile(codexExecutableInApp(appPath));
-    if (bundled) return bundled;
+  if (appPath && platform === "darwin") {
+    const bundled = codexExecutableInApp(appPath);
+    if (isExecutable(bundled)) return bundled;
   }
 
-  const installedCli = executableOnPath(env);
+  const installedCli = executableOnPath(env, platform, isExecutable);
   if (installedCli) return installedCli;
 
   if (platform === "darwin") {
     for (const applicationDirectory of ["/Applications", path.join(homeDirectory, "Applications")]) {
       for (const applicationName of ["ChatGPT.app", "Codex.app"]) {
-        const bundled = executableFile(codexExecutableInApp(
-          path.join(applicationDirectory, applicationName),
-        ));
-        if (bundled) return bundled;
+        const bundled = codexExecutableInApp(path.join(applicationDirectory, applicationName));
+        if (isExecutable(bundled)) return bundled;
       }
     }
   }
