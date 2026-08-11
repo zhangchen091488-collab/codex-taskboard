@@ -88,10 +88,5 @@ jobs:
       - name: Verify the Windows taskctl wrapper
         shell: pwsh
         run: .\test\windows-taskctl-wrapper.ps1 -ProjectRoot .
-      - name: Prepare check-only Windows icon placeholder
-        shell: pwsh
-        run: |
-          npm run tauri -- icon src-tauri/icons/icon.png --output "$env:RUNNER_TEMP/taskboard-icons"
-          Copy-Item "$env:RUNNER_TEMP/taskboard-icons/icon.ico" src-tauri/icons/icon.ico
       - name: Check the Windows launcher target
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc

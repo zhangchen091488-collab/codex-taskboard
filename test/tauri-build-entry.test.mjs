@@ -74,6 +74,7 @@ test("Windows build plan selects the Windows prepare entry without macOS bundles
     "build",
     "--target",
     "x86_64-pc-windows-msvc",
+    "--no-sign",
   ]);
   assert.deepEqual(plan.steps[1].environment, { CI: "true" });
 });

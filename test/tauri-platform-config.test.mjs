@@ -49,8 +49,14 @@ test("macOS-only bundle fields do not leak into the Windows merge", () => {
   assert.deepEqual(macosSnapshot.bundle.targets, ["app", "dmg"]);
   assert.equal(macosSnapshot.bundle.macOS.minimumSystemVersion, "14.0");
   assert.equal(windowsSnapshot.bundle.macOS, undefined);
-  assert.equal(windowsSnapshot.bundle.targets, undefined);
-  assert.deepEqual(windowsSnapshot.bundle.icon, ["icons/icon.png"]);
+  assert.deepEqual(macosSnapshot.bundle.icon, ["icons/icon.png", "icons/icon.icns"]);
+  assert.deepEqual(windowsSnapshot.bundle.targets, ["nsis"]);
+  assert.deepEqual(windowsSnapshot.bundle.icon, ["icons/icon.ico"]);
+  assert.equal(windowsSnapshot.bundle.createUpdaterArtifacts, false);
+  assert.deepEqual(windowsSnapshot.bundle.windows.nsis, {
+    installMode: "currentUser",
+    installerIcon: "icons/icon.ico",
+  });
 });
 
 test("merged snapshots use keys declared by the installed Tauri schema", () => {
@@ -63,5 +69,42 @@ test("merged snapshots use keys declared by the installed Tauri schema", () => {
     for (const key of Object.keys(snapshot.bundle)) {
       assert.ok(key in bundleSchema.properties, `unknown Tauri bundle key: ${key}`);
     }
+  }
+  const windowsSchema = schema.definitions.WindowsConfig;
+  const nsisSchema = schema.definitions.NsisConfig;
+  for (const key of Object.keys(windowsSnapshot.bundle.windows)) {
+    assert.ok(key in windowsSchema.properties, `unknown Tauri Windows key: ${key}`);
+  }
+  for (const key of Object.keys(windowsSnapshot.bundle.windows.nsis)) {
+    assert.ok(key in nsisSchema.properties, `unknown Tauri NSIS key: ${key}`);
+  }
+});
+
+test("Windows icon contains the reviewed multi-size 32-bit image set", async () => {
+  const icon = await readFile(new URL("../src-tauri/icons/icon.ico", import.meta.url));
+  assert.equal(icon.readUInt16LE(0), 0);
+  assert.equal(icon.readUInt16LE(2), 1);
+  const count = icon.readUInt16LE(4);
+  const entries = Array.from({ length: count }, (_, index) => {
+    const offset = 6 + index * 16;
+    return {
+      width: icon[offset] || 256,
+      height: icon[offset + 1] || 256,
+      bits: icon.readUInt16LE(offset + 6),
+      byteLength: icon.readUInt32LE(offset + 8),
+      imageOffset: icon.readUInt32LE(offset + 12),
+    };
+  });
+  assert.deepEqual(entries.map(({ width, height, bits }) => ({ width, height, bits })), [
+    { width: 32, height: 32, bits: 32 },
+    { width: 16, height: 16, bits: 32 },
+    { width: 24, height: 24, bits: 32 },
+    { width: 48, height: 48, bits: 32 },
+    { width: 64, height: 64, bits: 32 },
+    { width: 256, height: 256, bits: 32 },
+  ]);
+  for (const entry of entries) {
+    assert.ok(entry.byteLength > 0);
+    assert.ok(entry.imageOffset + entry.byteLength <= icon.length);
   }
 });

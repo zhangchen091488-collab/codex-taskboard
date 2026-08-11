@@ -99,7 +99,7 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
   assert.match(checkWorkflow, /node-x86_64-pc-windows-msvc\.exe --version/);
   assert.match(checkWorkflow, /Unexpected Windows Node sidecar version/);
   assert.match(checkWorkflow, /windows-taskctl-wrapper\.ps1 -ProjectRoot/);
-  assert.match(checkWorkflow, /Prepare check-only Windows icon placeholder/);
+  assert.doesNotMatch(checkWorkflow, /check-only Windows icon placeholder/);
   assert.doesNotMatch(checkWorkflow, /New-Item -ItemType File.*node-x86_64-pc-windows-msvc\.exe/);
 });
 

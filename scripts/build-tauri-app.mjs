@@ -58,6 +58,8 @@ export function createTauriBuildPlan(
   const tauriArguments = [tauriCliPath, "build", "--target", request.target];
   if (request.platform === "darwin") {
     tauriArguments.push("--bundles", "app,dmg");
+  } else if (request.platform === "win32") {
+    tauriArguments.push("--no-sign");
   }
   return {
     dryRun,
