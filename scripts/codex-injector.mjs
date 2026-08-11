@@ -10,6 +10,7 @@ import path from "node:path";
 import { resolveLauncherPort } from "../server/app.mjs";
 import {
   codexAppExecutablePath,
+  launchCodexAppWithPrivatePipe,
   launchIndependentCodexApp,
 } from "../shared/codex-app-launch.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
@@ -44,6 +45,7 @@ import {
   CdpPipeBrowser,
   validatedLoopbackCdpWebSocketUrl,
 } from "./codex-cdp-pipe.mjs";
+import { runCodexTransportOnly } from "./codex-transport-only.mjs";
 
 const injectorPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(injectorPath), "..");
@@ -129,6 +131,9 @@ function parseArgs(argv) {
     cdpPipe: false,
     launch: false,
     launchOnly: false,
+    transportOnly: false,
+    transportReadinessFile: null,
+    transportReadinessNonce: null,
     watch: false,
     open: false,
     refresh: false,
@@ -146,6 +151,7 @@ function parseArgs(argv) {
     const arg = argv[index];
     if (arg === "--launch") options.launch = true;
     else if (arg === "--launch-only") options.launchOnly = true;
+    else if (arg === "--transport-only") options.transportOnly = true;
     else if (arg === "--cdp-pipe") options.cdpPipe = true;
     else if (arg === "--watch") options.watch = true;
     else if (arg === "--open") options.open = true;
@@ -175,6 +181,17 @@ function parseArgs(argv) {
       if (!value) throw new Error("--source-profile-path requires a value");
       options.sourceProfilePath = path.resolve(value);
     }
+    else if (arg === "--transport-readiness-file") {
+      const value = argv[++index];
+      if (!value) throw new Error("--transport-readiness-file requires a value");
+      options.transportReadinessFile = path.resolve(value);
+    }
+    else if (arg === "--transport-readiness-nonce") {
+      options.transportReadinessNonce = argv[++index];
+      if (!/^[a-z0-9-]{1,100}$/i.test(options.transportReadinessNonce || "")) {
+        throw new Error("--transport-readiness-nonce must be an identifier");
+      }
+    }
     else throw new Error(`Unknown option: ${arg}`);
   }
 
@@ -185,7 +202,7 @@ function parseArgs(argv) {
     throw new Error("--cdp-pipe requires --launch");
   }
   if (
-    options.launchOnly
+    (options.launchOnly || options.transportOnly)
     && (
       options.launch
       || options.cdpPipe
@@ -200,10 +217,26 @@ function parseArgs(argv) {
       || options.screenshot
     )
   ) {
-    throw new Error("--launch-only cannot be combined with injector or refresh modes");
+    throw new Error("standalone launch modes cannot be combined with injector or refresh modes");
   }
-  if (!options.launchOnly && (options.profilePath || options.sourceProfilePath)) {
-    throw new Error("--profile-path options require --launch-only");
+  if (options.launchOnly && options.transportOnly) {
+    throw new Error("--launch-only cannot be combined with --transport-only");
+  }
+  if (
+    !options.launchOnly
+    && !options.transportOnly
+    && (options.profilePath || options.sourceProfilePath)
+  ) {
+    throw new Error("--profile-path options require a standalone launch mode");
+  }
+  if (options.transportOnly) {
+    if (!options.transportReadinessFile || !options.transportReadinessNonce) {
+      throw new Error(
+        "--transport-only requires --transport-readiness-file and --transport-readiness-nonce",
+      );
+    }
+  } else if (options.transportReadinessFile || options.transportReadinessNonce) {
+    throw new Error("transport readiness options require --transport-only");
   }
   return options;
 }
@@ -230,6 +263,17 @@ async function runLaunchOnly(options) {
   } finally {
     await profileLease.release();
   }
+}
+
+async function runTransportOnly(options) {
+  const exitCode = await runCodexTransportOnly({
+    appPath: options.appPath,
+    profilePath: options.profilePath ?? independentCodexProfilePath,
+    sourceProfilePath: options.sourceProfilePath ?? sourceCodexProfilePath,
+    readinessFile: options.transportReadinessFile,
+    readinessNonce: options.transportReadinessNonce,
+  });
+  process.exitCode = exitCode;
 }
 
 async function fetchJson(url) {
@@ -350,17 +394,10 @@ function launchCodex(appPath, port) {
 }
 
 async function launchCodexWithPipe(appPath) {
-  const child = spawn(
-    codexAppExecutablePath(appPath),
-    [
-      `--user-data-dir=${independentCodexProfilePath}`,
-      "--remote-debugging-pipe",
-    ],
-    {
-      env: withoutTaskboardLauncherEnvironment(process.env),
-      stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
-    },
-  );
+  const child = launchCodexAppWithPrivatePipe({
+    appPath,
+    profilePath: independentCodexProfilePath,
+  });
   const browser = new CdpPipeBrowser(child);
   try {
     await browser.open();
@@ -1514,6 +1551,10 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   if (options.launchOnly) {
     await runLaunchOnly(options);
+    return;
+  }
+  if (options.transportOnly) {
+    await runTransportOnly(options);
     return;
   }
   options.startupToken ??= taskboardInstanceToken;

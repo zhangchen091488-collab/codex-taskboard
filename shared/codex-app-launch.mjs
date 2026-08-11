@@ -21,6 +21,13 @@ export function codexIndependentLaunchArguments(profilePath) {
   return [`--user-data-dir=${profilePath}`];
 }
 
+export function codexAppEnvironment(profilePath, environment = process.env) {
+  return {
+    ...withoutTaskboardLauncherEnvironment(environment),
+    [CODEX_ELECTRON_USER_DATA_PATH_ENV]: profilePath,
+  };
+}
+
 export function launchIndependentCodexApp({
   appPath,
   profilePath,
@@ -32,11 +39,29 @@ export function launchIndependentCodexApp({
     codexAppExecutablePath(appPath, { platform }),
     codexIndependentLaunchArguments(profilePath),
     {
-      env: {
-        ...withoutTaskboardLauncherEnvironment(environment),
-        [CODEX_ELECTRON_USER_DATA_PATH_ENV]: profilePath,
-      },
+      env: codexAppEnvironment(profilePath, environment),
       stdio: "ignore",
+      windowsHide: true,
+    },
+  );
+}
+
+export function launchCodexAppWithPrivatePipe({
+  appPath,
+  profilePath,
+  environment = process.env,
+  platform = process.platform,
+  spawnProcess = spawn,
+}) {
+  return spawnProcess(
+    codexAppExecutablePath(appPath, { platform }),
+    [
+      ...codexIndependentLaunchArguments(profilePath),
+      "--remote-debugging-pipe",
+    ],
+    {
+      env: codexAppEnvironment(profilePath, environment),
+      stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
       windowsHide: true,
     },
   );

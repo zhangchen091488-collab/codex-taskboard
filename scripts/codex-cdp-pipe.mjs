@@ -103,9 +103,13 @@ class CdpPipeSession extends CdpEventChannel {
 }
 
 export class CdpPipeBrowser extends CdpEventChannel {
-  constructor(child) {
+  constructor(child, { commandTimeoutMs = 30_000 } = {}) {
     super();
+    if (!Number.isFinite(commandTimeoutMs) || commandTimeoutMs <= 0) {
+      throw new Error("CDP command timeout must be positive");
+    }
     this.child = child;
+    this.commandTimeoutMs = commandTimeoutMs;
     this.input = child.stdio[3];
     this.output = child.stdio[4];
     this.sequence = 0;
@@ -134,7 +138,13 @@ export class CdpPipeBrowser extends CdpEventChannel {
       const source = this.buffer.subarray(0, boundary).toString("utf8");
       this.buffer = this.buffer.subarray(boundary + 1);
       if (!source) continue;
-      const message = JSON.parse(source);
+      let message;
+      try {
+        message = JSON.parse(source);
+      } catch {
+        this.fail(new Error("Malformed CDP pipe message"));
+        return;
+      }
       if (message.id) {
         const pending = this.pending.get(message.id);
         if (!pending) continue;
@@ -160,7 +170,7 @@ export class CdpPipeBrowser extends CdpEventChannel {
       const timeout = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`Timed out waiting for CDP command ${method}`));
-      }, 30_000);
+      }, this.commandTimeoutMs);
       this.pending.set(id, { resolve, reject, timeout });
       const message = sessionId ? { id, method, params, sessionId } : { id, method, params };
       this.input.write(`${JSON.stringify(message)}\0`, (error) => {
@@ -211,9 +221,8 @@ export class CdpPipeBrowser extends CdpEventChannel {
   }
 
   close() {
-    if (this.closed) return;
     this.input.destroy();
     this.output.destroy();
-    this.fail(new Error("CDP pipe closed"));
+    if (!this.closed) this.fail(new Error("CDP pipe closed"));
   }
 }

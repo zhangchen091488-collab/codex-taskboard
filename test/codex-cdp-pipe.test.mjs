@@ -53,3 +53,37 @@ test("the private browser transport exchanges NUL-delimited CDP messages over in
   assert.equal(requests.some((request) => "url" in request), false);
   browser.close();
 });
+
+function fakePipeChild() {
+  const child = new EventEmitter();
+  child.exitCode = null;
+  child.signalCode = null;
+  child.stdio = [null, null, null, new PassThrough(), new PassThrough()];
+  return child;
+}
+
+test("the private browser transport rejects a malformed NUL-delimited frame", async () => {
+  const child = fakePipeChild();
+  const browser = new CdpPipeBrowser(child, { commandTimeoutMs: 100 });
+  child.stdio[3].once("data", () => child.stdio[4].write("not-json\0"));
+  await assert.rejects(browser.open(), /Malformed CDP pipe message/);
+  browser.close();
+});
+
+test("the private browser transport times out a missing handshake response", async () => {
+  const child = fakePipeChild();
+  const browser = new CdpPipeBrowser(child, { commandTimeoutMs: 5 });
+  await assert.rejects(browser.open(), /Timed out waiting for CDP command Browser\.getVersion/);
+  browser.close();
+});
+
+test("the private browser transport rejects when Codex exits during handshake", async () => {
+  const child = fakePipeChild();
+  const browser = new CdpPipeBrowser(child, { commandTimeoutMs: 100 });
+  child.stdio[3].once("data", () => {
+    child.exitCode = 19;
+    child.emit("exit", 19, null);
+  });
+  await assert.rejects(browser.open(), /Codex exited \(19\)/);
+  browser.close();
+});

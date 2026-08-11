@@ -9,6 +9,7 @@ import path from "node:path";
 import {
   codexAppExecutablePath,
   codexIndependentLaunchArguments,
+  launchCodexAppWithPrivatePipe,
   launchIndependentCodexApp,
 } from "../shared/codex-app-launch.mjs";
 
@@ -53,6 +54,39 @@ test("launch-only arguments contain no CDP transport or shell command", () => {
 
   assert.deepEqual(arguments_, [String.raw`--user-data-dir=C:\profile with spaces`]);
   assert.doesNotMatch(arguments_.join(" "), /remote-debugging|cdp|cmd\.exe|powershell/i);
+});
+
+test("private-pipe launch exposes only inherited CDP descriptors and no debug port", () => {
+  const executable = String.raw`C:\Program Files\WindowsApps\OpenAI.Codex\app\ChatGPT.exe`;
+  const profile = String.raw`C:\Users\示例 User\AppData\Roaming\com.taskboard\codex profile`;
+  const calls = [];
+  launchCodexAppWithPrivatePipe({
+    appPath: executable,
+    profilePath: profile,
+    platform: "win32",
+    environment: {
+      PATH: String.raw`C:\Windows\System32`,
+      CODEX_TASKBOARD_INSTANCE_SECRET: "must-not-reach-codex",
+    },
+    spawnProcess(...args) {
+      calls.push(args);
+      return { pid: 53 };
+    },
+  });
+
+  assert.deepEqual(calls, [[
+    executable,
+    [`--user-data-dir=${profile}`, "--remote-debugging-pipe"],
+    {
+      env: {
+        PATH: String.raw`C:\Windows\System32`,
+        CODEX_ELECTRON_USER_DATA_PATH: profile,
+      },
+      stdio: ["ignore", "ignore", "ignore", "pipe", "pipe"],
+      windowsHide: true,
+    },
+  ]]);
+  assert.doesNotMatch(JSON.stringify(calls), /remote-debugging-port|127\.0\.0\.1|0\.0\.0\.0/);
 });
 
 test("macOS executable resolution retains the existing application-bundle behavior", () => {
