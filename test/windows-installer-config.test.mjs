@@ -13,6 +13,7 @@ test("Windows unsigned installer is current-user NSIS with bundled Node", async 
     bundle: "nsis",
     updaterArtifacts: false,
     bundledNode: true,
+    webview2: "downloadBootstrapper",
   });
 });
 
@@ -30,6 +31,10 @@ test("installer policy rejects machine-wide mode and unaudited uninstall hooks",
         targets: ["nsis"],
         icon: ["icons/icon.ico"],
         windows: {
+          webviewInstallMode: {
+            type: "downloadBootstrapper",
+            silent: true,
+          },
           nsis: {
             installMode: "currentUser",
             installerIcon: "icons/icon.ico",
@@ -62,5 +67,19 @@ test("installer policy rejects machine-wide mode and unaudited uninstall hooks",
   assert.throws(
     () => validateWindowsInstallerConfiguration(customUninstall),
     /data-retention audit/,
+  );
+
+  const skippedWebView = structuredClone(baseInput);
+  skippedWebView.windowsConfig.bundle.windows.webviewInstallMode = { type: "skip" };
+  assert.throws(
+    () => validateWindowsInstallerConfiguration(skippedWebView),
+    /WebView2 behavior must be explicit/,
+  );
+
+  const arbitraryMinimum = structuredClone(baseInput);
+  arbitraryMinimum.windowsConfig.bundle.windows.minimumWebview2Version = "999.0.0.0";
+  assert.throws(
+    () => validateWindowsInstallerConfiguration(arbitraryMinimum),
+    /arbitrary WebView2 minimum/,
   );
 });

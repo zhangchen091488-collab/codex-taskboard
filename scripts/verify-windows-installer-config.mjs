@@ -27,6 +27,16 @@ export function validateWindowsInstallerConfiguration({
     windowsConfig.bundle?.windows?.nsis?.installerIcon,
     "icons/icon.ico",
   );
+  assert.deepEqual(
+    windowsConfig.bundle?.windows?.webviewInstallMode,
+    { type: "downloadBootstrapper", silent: true },
+    "Windows installer WebView2 behavior must be explicit and reviewed",
+  );
+  assert.equal(
+    windowsConfig.bundle?.windows?.minimumWebview2Version,
+    undefined,
+    "Do not pin an arbitrary WebView2 minimum without a tested feature requirement",
+  );
   assert.equal(
     windowsConfig.bundle?.windows?.nsis?.template,
     undefined,
@@ -78,6 +88,7 @@ export async function verifyWindowsInstallerConfiguration() {
     bundle: "nsis",
     updaterArtifacts: false,
     bundledNode: true,
+    webview2: "downloadBootstrapper",
   };
 }
 
