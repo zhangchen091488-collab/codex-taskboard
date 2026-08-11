@@ -22,6 +22,10 @@ const checkWorkflow = await readFile(new URL("../.github/workflows/check.yml", i
 test("the launcher keeps OS-specific app setup behind one platform boundary", () => {
   assert.match(launcherSource, /platform::configure_app\(app\)/);
   assert.doesNotMatch(launcherSource, /ActivationPolicy/);
+  assert.match(
+    launcherSource,
+    /#\[cfg\(target_os = "macos"\)\]\nuse std::os::\{fd::AsRawFd, unix::process::CommandExt\};/,
+  );
   assert.match(platformSource, /#\[cfg\(target_os = "macos"\)\]/);
   assert.match(platformSource, /#\[cfg\(target_os = "windows"\)\]/);
   assert.match(macosPlatformSource, /ActivationPolicy::Accessory/);

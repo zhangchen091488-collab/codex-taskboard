@@ -3,11 +3,12 @@
 mod platform;
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use std::os::{fd::AsRawFd, unix::process::CommandExt};
 use std::{
     fs::{self, File, OpenOptions},
     io::{BufRead, BufReader, Write},
     net::TcpListener,
-    os::{fd::AsRawFd, unix::process::CommandExt},
     path::{Path, PathBuf},
     process::{Command as StdCommand, Stdio},
     sync::{
