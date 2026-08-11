@@ -28,6 +28,7 @@
     "app:verify:windows-resources": "node scripts/verify-windows-resources.mjs",
     "app:verify:windows-installer": "node scripts/verify-windows-installer-config.mjs",
     "app:verify:windows-updater": "node scripts/create-windows-updater.mjs",
+    "app:verify:windows-vm": "node scripts/verify-windows-vm-matrix.mjs",
     "app:merge-updater-manifest": "node scripts/merge-updater-manifests.mjs",
     "app:verify-release": "node scripts/verify-macos-release.mjs",
     "tauri": "tauri",
