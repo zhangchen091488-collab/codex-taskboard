@@ -24,6 +24,7 @@ const platformNames = new Map([
 function parseBuildArguments(argv, hostPlatform) {
   let dryRun = false;
   let signed = false;
+  let updater = false;
   const prepareArguments = [];
   for (const argument of argv) {
     if (argument === "--dry-run") {
@@ -32,6 +33,9 @@ function parseBuildArguments(argv, hostPlatform) {
     } else if (argument === "--sign") {
       if (signed) throw new Error("The --sign option may only be specified once");
       signed = true;
+    } else if (argument === "--updater") {
+      if (updater) throw new Error("The --updater option may only be specified once");
+      updater = true;
     } else {
       prepareArguments.push(argument);
     }
@@ -39,6 +43,7 @@ function parseBuildArguments(argv, hostPlatform) {
   return {
     dryRun,
     signed,
+    updater,
     request: parsePrepareArguments(prepareArguments, { hostPlatform }),
   };
 }
@@ -53,7 +58,7 @@ export function createTauriBuildPlan(
     environment = process.env,
   } = {},
 ) {
-  const { dryRun, signed, request } = parseBuildArguments(argv, hostPlatform);
+  const { dryRun, signed, updater, request } = parseBuildArguments(argv, hostPlatform);
   const platformName = platformNames.get(request.platform);
   if (!platformName) {
     throw new Error(`Unsupported build platform: ${request.platform}`);
@@ -63,6 +68,19 @@ export function createTauriBuildPlan(
   }
   if (signed && request.platform !== "win32") {
     throw new Error("The --sign option is currently supported only for Windows builds");
+  }
+  if (updater && (!signed || request.platform !== "win32")) {
+    throw new Error("The --updater option requires a signed Windows build");
+  }
+  if (updater) {
+    if (!environment.TAURI_SIGNING_PRIVATE_KEY) {
+      throw new Error("TAURI_SIGNING_PRIVATE_KEY is required for Windows updater artifacts");
+    }
+    if (!("TAURI_SIGNING_PRIVATE_KEY_PASSWORD" in environment)) {
+      throw new Error(
+        "TAURI_SIGNING_PRIVATE_KEY_PASSWORD must be defined for Windows updater artifacts",
+      );
+    }
   }
 
   const tauriArguments = [tauriCliPath, "build", "--target", request.target];
@@ -78,7 +96,7 @@ export function createTauriBuildPlan(
       "--config",
       JSON.stringify({
         bundle: {
-          createUpdaterArtifacts: false,
+          createUpdaterArtifacts: updater,
           ...(windowsOverride ? { windows: windowsOverride } : {}),
         },
       }),
@@ -87,6 +105,7 @@ export function createTauriBuildPlan(
   return {
     dryRun,
     signed,
+    updater,
     platform: request.platform,
     target: request.target,
     steps: [

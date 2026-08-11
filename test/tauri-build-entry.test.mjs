@@ -37,6 +37,7 @@ test("macOS build plan uses explicit prepare, bundles, and process environment",
   });
   assert.equal(plan.dryRun, true);
   assert.equal(plan.signed, false);
+  assert.equal(plan.updater, false);
   assert.equal(plan.target, "universal-apple-darwin");
   assert.deepEqual(plan.steps[0], {
     name: "prepare-macos",
@@ -66,6 +67,7 @@ test("Windows build plan creates an unsigned NSIS without requiring updater keys
   });
   assert.equal(plan.target, "x86_64-pc-windows-msvc");
   assert.equal(plan.signed, false);
+  assert.equal(plan.updater, false);
   assert.deepEqual(plan.steps[0].args, [
     "/reviewed/npm-cli.js",
     "run",
@@ -83,6 +85,46 @@ test("Windows build plan creates an unsigned NSIS without requiring updater keys
     '{"bundle":{"createUpdaterArtifacts":false}}',
   ]);
   assert.deepEqual(plan.steps[1].environment, { CI: "true" });
+});
+
+test("Windows release build enables Tauri v2 updater signing without serializing secrets", () => {
+  const plan = createTauriBuildPlan(["--sign", "--updater"], {
+    ...planOptions,
+    hostPlatform: "win32",
+    environment: {
+      WINDOWS_CERTIFICATE_THUMBPRINT: "0123456789abcdef0123456789abcdef01234567",
+      WINDOWS_TIMESTAMP_URL: "https://timestamp.example.test/rfc3161",
+      WINDOWS_TIMESTAMP_PROTOCOL: "rfc3161",
+      TAURI_SIGNING_PRIVATE_KEY: "must-not-enter-plan",
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: "must-not-enter-plan",
+    },
+  });
+  assert.equal(plan.signed, true);
+  assert.equal(plan.updater, true);
+  assert.doesNotMatch(JSON.stringify(plan), /must-not-enter-plan/);
+  const configIndex = plan.steps[1].args.indexOf("--config");
+  const config = JSON.parse(plan.steps[1].args[configIndex + 1]);
+  assert.equal(config.bundle.createUpdaterArtifacts, true);
+
+  assert.throws(
+    () => createTauriBuildPlan(["--updater"], {
+      ...planOptions,
+      hostPlatform: "win32",
+    }),
+    /requires a signed Windows build/,
+  );
+  assert.throws(
+    () => createTauriBuildPlan(["--sign", "--updater"], {
+      ...planOptions,
+      hostPlatform: "win32",
+      environment: {
+        WINDOWS_CERTIFICATE_THUMBPRINT: "A".repeat(40),
+        WINDOWS_TIMESTAMP_URL: "https://timestamp.example.test",
+        WINDOWS_TIMESTAMP_PROTOCOL: "rfc3161",
+      },
+    }),
+    /TAURI_SIGNING_PRIVATE_KEY/,
+  );
 });
 
 test("signed Windows build fails closed and passes only public signing metadata to Tauri", () => {
@@ -140,6 +182,10 @@ test("build entry rejects unknown hosts, targets, duplicate options, and direct 
   assert.throws(
     () => createTauriBuildPlan(["--sign", "--sign"], planOptions),
     /--sign option may only be specified once/,
+  );
+  assert.throws(
+    () => createTauriBuildPlan(["--updater", "--updater"], planOptions),
+    /--updater option may only be specified once/,
   );
   assert.throws(
     () => createTauriBuildPlan([], { ...planOptions, npmCliPath: "", hostPlatform: "darwin" }),
