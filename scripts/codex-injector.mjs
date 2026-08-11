@@ -20,6 +20,11 @@ import {
   initializeIndependentCodexProfile,
 } from "../shared/codex-profile.mjs";
 import {
+  errorCodexTransport,
+  publishCodexTransportReadiness,
+  readyCodexTransport,
+} from "../shared/codex-transport-readiness.mjs";
+import {
   parseTaskboardAutomationHostRequest,
   reconcileTaskboardAutomation,
   taskboardAutomationPolicyOperation,
@@ -236,7 +241,14 @@ function parseArgs(argv) {
       );
     }
   } else if (options.transportReadinessFile || options.transportReadinessNonce) {
-    throw new Error("transport readiness options require --transport-only");
+    if (!options.launch || !options.watch || !options.cdpPipe) {
+      throw new Error(
+        "transport readiness options require --transport-only or --launch --watch --cdp-pipe",
+      );
+    }
+    if (!options.transportReadinessFile || !options.transportReadinessNonce) {
+      throw new Error("transport readiness file and nonce must be provided together");
+    }
   }
   return options;
 }
@@ -274,6 +286,16 @@ async function runTransportOnly(options) {
     readinessNonce: options.transportReadinessNonce,
   });
   process.exitCode = exitCode;
+}
+
+async function publishFullTransportReadiness(options, ready) {
+  if (!options.transportReadinessFile || !options.transportReadinessNonce) return;
+  await publishCodexTransportReadiness(
+    options.transportReadinessFile,
+    ready
+      ? readyCodexTransport(options.transportReadinessNonce)
+      : errorCodexTransport(options.transportReadinessNonce),
+  );
 }
 
 async function fetchJson(url) {
@@ -1717,9 +1739,15 @@ async function main() {
     }
 
     if (options.cdpPipe) {
-      const launched = await launchCodexWithPipe(options.appPath);
-      codexProcess = launched.child;
-      cdpRuntime = pipeCdpRuntime(launched.browser);
+      try {
+        const launched = await launchCodexWithPipe(options.appPath);
+        codexProcess = launched.child;
+        cdpRuntime = pipeCdpRuntime(launched.browser);
+        await publishFullTransportReadiness(options, true);
+      } catch (error) {
+        await publishFullTransportReadiness(options, false).catch(() => {});
+        throw error;
+      }
     } else if (!cdpReachable) {
       codexProcess = launchCodex(options.appPath, options.port);
       await waitUntilReachable(cdpVersionUrl, 30_000);

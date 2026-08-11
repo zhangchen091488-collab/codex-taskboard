@@ -156,3 +156,21 @@ test("the injected iframe follows the configured local service port", () => {
   assert.match(source, /onReadiness: \(readiness\) => configureTaskboardEndpoint\(readiness\.port\)/);
   assert.match(source, /window\.__CODEX_TASKBOARD_URL__ = \$\{JSON\.stringify\(taskboardPageUrl\)\}/);
 });
+
+test("the complete private-pipe injector publishes the same nonce readiness after handshake", () => {
+  assert.match(source, /readyCodexTransport/);
+  assert.match(source, /errorCodexTransport/);
+  assert.match(source, /publishCodexTransportReadiness/);
+  assert.match(
+    source,
+    /transport readiness options require --transport-only or --launch --watch --cdp-pipe/,
+  );
+  const launchBranch = source.slice(
+    source.indexOf("if (options.cdpPipe) {", source.indexOf("async function main")),
+    source.indexOf("} else if (!cdpReachable)", source.indexOf("async function main")),
+  );
+  assert.match(launchBranch, /await launchCodexWithPipe\(options\.appPath\)/);
+  assert.match(launchBranch, /await publishFullTransportReadiness\(options, true\)/);
+  assert.match(launchBranch, /await publishFullTransportReadiness\(options, false\)/);
+  assert.doesNotMatch(launchBranch, /remote-debugging-port|WebSocket/);
+});
