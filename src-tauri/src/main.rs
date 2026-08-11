@@ -5,6 +5,7 @@ pub mod platform;
 #[cfg(target_os = "macos")]
 mod readiness;
 mod transport_readiness;
+#[cfg(any(target_os = "windows", test))]
 mod update_state;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -102,6 +103,8 @@ struct LauncherState {
     data_directory: PathBuf,
     log_path: PathBuf,
     pid_record_path: PathBuf,
+    #[cfg(target_os = "windows")]
+    update_state_path: PathBuf,
 }
 
 impl LauncherState {
@@ -124,11 +127,66 @@ impl LauncherState {
             lifecycle: Mutex::new(()),
             taskboard_url: Mutex::new(None),
             pid_record_path: data_directory.join("launcher-child.json"),
+            #[cfg(target_os = "windows")]
+            update_state_path: data_directory.join("windows-update-state.json"),
             data_directory,
             log_path: log_directory.join("codex-taskboard-launcher.log"),
         }
     }
 }
+
+#[cfg(target_os = "windows")]
+fn persist_update_install_intent(
+    state: &LauncherState,
+    target_version: &str,
+) -> Result<(), String> {
+    update_state::write_install_intent(&state.update_state_path, target_version)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn persist_update_install_intent(
+    _state: &LauncherState,
+    _target_version: &str,
+) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn clear_update_install_intent(state: &LauncherState) -> Result<(), String> {
+    update_state::remove_install_intent(&state.update_state_path)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn clear_update_install_intent(_state: &LauncherState) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn recover_update_install_intent(app: &AppHandle, state: &Arc<LauncherState>) {
+    let current_version = state.snapshot.lock().unwrap().version.clone();
+    match update_state::consume_install_intent(&state.update_state_path, &current_version) {
+        Ok(Some(recovered)) => {
+            let message = recovered.message();
+            append_log(state, &format!("Recovered Windows update state: {message}"));
+            update_snapshot(app, state, |snapshot| {
+                snapshot.update_message = message;
+            });
+        }
+        Ok(None) => {}
+        Err(error) => {
+            append_log(
+                state,
+                &format!("Invalid Windows update recovery state was discarded: {error}"),
+            );
+            update_snapshot(app, state, |snapshot| {
+                snapshot.update_message = "检测到无效的 Windows 更新恢复状态；已安全清理。".into();
+            });
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn recover_update_install_intent(_app: &AppHandle, _state: &Arc<LauncherState>) {}
 
 fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
     fs::create_dir_all(destination)?;
@@ -920,18 +978,36 @@ async fn install_update(
         if state.intentional_stop.load(Ordering::SeqCst) {
             return Err("App exit is in progress".into());
         }
+        if let Err(error) = persist_update_install_intent(state, &update_version) {
+            append_log(
+                state,
+                &format!("Could not persist update install intent: {error}"),
+            );
+            update_snapshot(app, state, |snapshot| {
+                snapshot.update_message = "无法准备安全更新状态，尚未停止任务面板。".into();
+                snapshot.update_available = true;
+            });
+            return Err(format!("无法记录更新安装状态：{error}"));
+        }
         state.update_in_progress.store(true, Ordering::SeqCst);
         stop_managed_child_locked(app, state);
     }
     if let Err(error) = update.install(&bytes) {
         append_log(state, &format!("Update installation failed: {error}"));
-        let restart_error = {
+        let (intent_cleanup_error, restart_error) = {
             let _lifecycle = state.lifecycle.lock().unwrap();
+            let intent_cleanup_error = clear_update_install_intent(state).err();
             let restart_error = start_launcher_locked(app, state).err();
             state.intentional_stop.store(false, Ordering::SeqCst);
             state.update_in_progress.store(false, Ordering::SeqCst);
-            restart_error
+            (intent_cleanup_error, restart_error)
         };
+        if let Some(intent_cleanup_error) = &intent_cleanup_error {
+            append_log(
+                state,
+                &format!("Windows update state cleanup failed: {intent_cleanup_error}"),
+            );
+        }
         if let Some(restart_error) = &restart_error {
             append_log(
                 state,
@@ -951,7 +1027,10 @@ async fn install_update(
                 snapshot.message = format!("任务面板恢复失败：{restart_error}");
             }
         });
-        return Err(error.to_string());
+        return Err(match intent_cleanup_error {
+            Some(cleanup_error) => format!("{error}; 更新状态清理失败：{cleanup_error}"),
+            None => error.to_string(),
+        });
     }
 
     append_log(
@@ -1071,6 +1150,7 @@ fn main() {
             let version = app.package_info().version.to_string();
             let state = Arc::new(LauncherState::new(data_directory, log_directory, version));
             app.manage(state.clone());
+            recover_update_install_intent(&app.handle().clone(), &state);
 
             let check_update =
                 MenuItem::with_id(app, "check-update", "检查更新", false, None::<&str>)?;
