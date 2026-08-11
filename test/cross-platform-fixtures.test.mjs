@@ -41,3 +41,17 @@ test("browser fixture discovery includes standard Windows Chrome and Edge locati
   assert.ok(candidates.some((candidate) => candidate.endsWith("Chrome\\Application\\chrome.exe")));
   assert.ok(candidates.some((candidate) => candidate.endsWith("Edge\\Application\\msedge.exe")));
 });
+
+test("the complete Node test command excludes executable fixture modules on every shell", async () => {
+  const [packageSource, runner] = await Promise.all([
+    source("../package.json"),
+    source("../scripts/run-tests.mjs"),
+  ]);
+  const packageJson = JSON.parse(packageSource);
+
+  assert.equal(packageJson.scripts.test, "node scripts/run-tests.mjs");
+  assert.match(runner, /readdir\(testDirectory, \{ withFileTypes: true \}\)/);
+  assert.match(runner, /entry\.isFile\(\) && entry\.name\.endsWith\("\.test\.mjs"\)/);
+  assert.match(runner, /spawn\(process\.execPath, \["--test", \.\.\.testFiles\]/);
+  assert.doesNotMatch(runner, /recursive|fixtures/);
+});
