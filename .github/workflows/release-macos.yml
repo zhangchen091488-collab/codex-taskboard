@@ -264,6 +264,7 @@ jobs:
           cp "$BUNDLE_ROOT/dmg/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" "$RELEASE_ASSETS/"
           cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" "$RELEASE_ASSETS/"
           cp "$BUNDLE_ROOT/release/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" "$RELEASE_ASSETS/"
+          cp "$BUNDLE_ROOT/release/darwin-updater.json" "$RELEASE_ASSETS/"
           cp "$BUNDLE_ROOT/release/latest.json" "$RELEASE_ASSETS/"
           (
             cd "$RELEASE_ASSETS"
@@ -271,6 +272,7 @@ jobs:
               "Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
               "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
               "Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+              "darwin-updater.json" \
               "latest.json" > "$MANIFEST_ROOT/release-assets.sha256"
           )
 
@@ -299,6 +301,7 @@ jobs:
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.dmg" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz" \
             "$RELEASE_ASSETS/Codex.Taskboard_${PACKAGE_VERSION}_universal.app.tar.gz.sig" \
+            "$RELEASE_ASSETS/darwin-updater.json" \
             "$RELEASE_ASSETS/latest.json"
 
       - name: Remove temporary signing files

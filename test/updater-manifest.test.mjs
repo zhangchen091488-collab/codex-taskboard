@@ -22,6 +22,10 @@ const windowsProducerSource = await readFile(
   new URL("../scripts/create-windows-updater.mjs", import.meta.url),
   "utf8",
 );
+const macReleaseWorkflow = await readFile(
+  new URL("../.github/workflows/release-macos.yml", import.meta.url),
+  "utf8",
+);
 
 function signatureEnvelope(fill) {
   const signatureRecord = Buffer.alloc(74, fill);
@@ -117,6 +121,11 @@ test("Darwin and Windows producers use the shared fragment contract", () => {
   assert.match(macProducerSource, /darwin-updater\.json/);
   assert.match(macProducerSource, /createUpdaterManifest/);
   assert.match(macVerifierSource, /latest\.json does not match the verified Darwin updater fragment/);
+  const fragmentMentions = macReleaseWorkflow.match(/darwin-updater\.json/g) ?? [];
+  assert.ok(
+    fragmentMentions.length >= 3,
+    "macOS release must copy, hash, upload, and remotely verify the Darwin fragment",
+  );
   assert.match(windowsProducerSource, /WINDOWS_UPDATER_PLATFORMS/);
   assert.match(windowsProducerSource, /validateUpdaterFragment/);
   assert.doesNotMatch(windowsProducerSource, /latest\.json/);
