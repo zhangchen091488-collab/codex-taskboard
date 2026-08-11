@@ -16,6 +16,10 @@ const windowsPlatformSource = await readFile(
   "utf8",
 );
 const tauriConfig = JSON.parse(await readFile(new URL("../src-tauri/tauri.conf.json", import.meta.url), "utf8"));
+const tauriMacosConfig = JSON.parse(await readFile(
+  new URL("../src-tauri/tauri.macos.conf.json", import.meta.url),
+  "utf8",
+));
 const releaseWorkflow = await readFile(new URL("../.github/workflows/release-macos.yml", import.meta.url), "utf8");
 const checkWorkflow = await readFile(new URL("../.github/workflows/check.yml", import.meta.url), "utf8");
 
@@ -88,5 +92,6 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
 });
 
 test("the launcher minimum system version matches the current Codex client requirement", () => {
-  assert.equal(tauriConfig.bundle.macOS.minimumSystemVersion, "14.0");
+  assert.equal(tauriMacosConfig.bundle.macOS.minimumSystemVersion, "14.0");
+  assert.equal(tauriConfig.bundle.macOS, undefined);
 });

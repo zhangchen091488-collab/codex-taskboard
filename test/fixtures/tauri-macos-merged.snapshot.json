@@ -15,7 +15,13 @@
     "resources": {
       "resources/": ""
     },
-    "icon": ["icons/icon.png"]
+    "icon": ["icons/icon.png", "icons/icon.icns"],
+    "targets": ["app", "dmg"],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "hardenedRuntime": true,
+      "entitlements": "Entitlements.plist"
+    }
   },
   "plugins": {
     "updater": {
