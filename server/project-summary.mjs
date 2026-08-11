@@ -1,5 +1,6 @@
 import { spawnCodexTurn } from "./ai-chat-process.mjs";
 import { ApiError } from "./database.mjs";
+import { terminateManagedChildTree } from "../shared/process-tree.mjs";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const CHECK_INTERVAL_MS = 60 * 60 * 1_000;
@@ -12,16 +13,6 @@ const STATUS_LABELS = {
   done: "完成",
   canceled: "取消",
 };
-
-function signalProcessGroup(child, signal) {
-  if (Number.isInteger(child?.pid)) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {}
-  }
-  child?.kill(signal);
-}
 
 function isDue(summary) {
   if (!summary.attemptedAt) return true;
@@ -60,6 +51,8 @@ export class ProjectSummaryService {
     this.codexExecutable = options.codexExecutable;
     this.workspacePath = options.workspacePath;
     this.processEnv = options.processEnv ?? process.env;
+    this.spawnTurn = options.spawnTurn ?? spawnCodexTurn;
+    this.killGraceMs = options.killGraceMs ?? 1_000;
     this.active = new Map();
     this.closed = false;
     this.timer = setInterval(() => void this.refreshDueProjects(), CHECK_INTERVAL_MS);
@@ -94,18 +87,20 @@ export class ProjectSummaryService {
 
   async refreshDueProjects() {
     for (const summary of this.database.listProjectSummaries()) {
+      if (this.closed) return;
       if (isDue(summary)) await this.refresh(summary.projectId);
     }
   }
 
   async #generate(projectId, active) {
     try {
+      if (this.closed) return;
       const project = this.database.getProject(projectId);
       if (!project) return;
       const tasks = this.database.listTasks({ projectId, archived: "false" });
       let generatedSummary = "";
       let terminalError = "";
-      const { child, completion } = spawnCodexTurn({
+      const { child, completion } = this.spawnTurn({
         executable: this.codexExecutable,
         args: [
           "exec",
@@ -157,7 +152,11 @@ export class ProjectSummaryService {
     this.closed = true;
     clearInterval(this.timer);
     const active = [...this.active.values()];
-    for (const entry of active) signalProcessGroup(entry.child, "SIGTERM");
+    await Promise.allSettled(active.map((entry) => terminateManagedChildTree(entry.child, {
+      detached: true,
+      terminateTimeoutMs: this.killGraceMs,
+      killTimeoutMs: 1_000,
+    })));
     await Promise.allSettled(active.map((entry) => entry.promise));
   }
 }

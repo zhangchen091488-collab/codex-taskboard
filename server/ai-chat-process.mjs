@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { forceStopManagedChildTree } from "../shared/process-tree.mjs";
 
 const VISIBLE_TEXT_LIMIT = 65_536;
 const STDERR_LIMIT = 65_536;
@@ -360,13 +361,14 @@ export function spawnCodexTurn({
   });
 
   function terminateProcessGroup() {
-    if (Number.isInteger(child.pid)) {
+    void forceStopManagedChildTree(child, {
+      detached: true,
+      timeoutMs: 1_000,
+    }).catch(() => {
       try {
-        process.kill(-child.pid, "SIGKILL");
-        return;
+        child.kill("SIGKILL");
       } catch {}
-    }
-    child.kill("SIGKILL");
+    });
   }
 
   function rejectWithDiagnostic(error) {

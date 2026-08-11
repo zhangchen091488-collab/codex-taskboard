@@ -10,6 +10,7 @@ import {
   normalizeCodexEvent,
   spawnCodexTurn,
 } from "./ai-chat-process.mjs";
+import { terminateManagedChildTree } from "../shared/process-tree.mjs";
 
 const SANDBOXES = new Set(["read-only", "workspace-write", "danger-full-access"]);
 const ERROR_CONTENT_LIMIT = 65_536;
@@ -23,18 +24,6 @@ const CODEX_IMAGE_TYPES = new Set([
 function cappedError(value) {
   const message = value instanceof Error ? value.message : String(value ?? "");
   return message.slice(0, ERROR_CONTENT_LIMIT);
-}
-
-function signalProcessGroup(child, signal) {
-  if (Number.isInteger(child?.pid)) {
-    try {
-      process.kill(-child.pid, signal);
-      return;
-    } catch {}
-  }
-  try {
-    child?.kill(signal);
-  } catch {}
 }
 
 function wait(milliseconds) {
@@ -384,15 +373,20 @@ export class AiChatService {
     }
 
     active.interrupted = true;
-    signalProcessGroup(active.child, "SIGTERM");
-    const timer = setTimeout(() => {
-      if (this.active.has(runId)) signalProcessGroup(active.child, "SIGKILL");
-    }, this.killGraceMs);
-    timer.unref();
+    const termination = terminateManagedChildTree(active.child, {
+      detached: true,
+      terminateTimeoutMs: this.killGraceMs,
+      killTimeoutMs: 1_000,
+    }).catch(() => {});
 
     const completion = this.completions.get(runId);
     if (completion) {
-      await Promise.race([completion.catch(() => {}), wait(this.killGraceMs + 25)]);
+      await Promise.race([
+        Promise.allSettled([termination, completion]),
+        wait(this.killGraceMs + 1_025),
+      ]);
+    } else {
+      await termination;
     }
     return this.getRun(runId);
   }
@@ -401,19 +395,20 @@ export class AiChatService {
     const entries = [...this.active.entries()];
     for (const [, active] of entries) {
       active.interrupted = true;
-      signalProcessGroup(active.child, "SIGTERM");
     }
+
+    const terminations = entries.map(([, active]) => terminateManagedChildTree(active.child, {
+      detached: true,
+      terminateTimeoutMs: this.killGraceMs,
+      killTimeoutMs: 1_000,
+    }).catch(() => {}));
 
     const completions = entries
       .map(([runId]) => this.completions.get(runId))
       .filter(Boolean);
+    await Promise.allSettled(terminations);
     if (completions.length > 0) {
-      const settled = Promise.allSettled(completions);
-      await Promise.race([settled, wait(this.killGraceMs)]);
-      for (const [runId, active] of entries) {
-        if (this.active.has(runId)) signalProcessGroup(active.child, "SIGKILL");
-      }
-      await settled;
+      await Promise.allSettled(completions);
     }
     this.listeners.clear();
   }

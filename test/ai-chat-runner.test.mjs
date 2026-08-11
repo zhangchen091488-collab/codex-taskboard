@@ -45,9 +45,10 @@ async function createFixture() {
   const capturePath = path.join(directory, "capture.jsonl");
   const environmentCapturePath = path.join(directory, "environment-capture.jsonl");
   const descendantPath = path.join(directory, "descendant-alive");
+  const stubbornReadyPath = path.join(directory, "stubborn-ready.json");
   const executable = path.join(directory, "fake-codex.mjs");
   await writeFile(executable, `#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
 if (process.env.FAKE_ENVIRONMENT_CAPTURE_PATH) {
@@ -103,6 +104,19 @@ if (args[0] === "app-server") {
       }
       return;
     }
+    if (prompt.includes("WAIT_STUBBORN")) {
+      const descendant = spawn(process.execPath, [
+        "-e",
+        'process.on("SIGTERM", () => {}); setTimeout(() => require("node:fs").writeFileSync(process.env.FAKE_DESCENDANT_PATH, "alive"), 300); setInterval(() => {}, 1000)',
+      ], {env:process.env,stdio:"ignore"});
+      writeFileSync(process.env.FAKE_STUBBORN_READY_PATH, JSON.stringify({
+        childPid: process.pid,
+        descendantPid: descendant.pid,
+      }));
+      process.on("SIGTERM", () => {});
+      setInterval(() => {}, 1000);
+      return;
+    }
     if (prompt.includes("MALFORMED")) {
       process.stdout.write("{not-json}\\n");
       return;
@@ -155,6 +169,7 @@ if (args[0] === "app-server") {
       FAKE_CAPTURE_PATH: capturePath,
       FAKE_DESCENDANT_PATH: descendantPath,
       FAKE_ENVIRONMENT_CAPTURE_PATH: environmentCapturePath,
+      FAKE_STUBBORN_READY_PATH: stubbornReadyPath,
       CODEX_TASKBOARD_INSTANCE_TOKEN: "must-not-reach-codex",
       CODEX_TASKBOARD_INSTANCE_SECRET: "must-not-reach-codex",
       CODEX_TASKBOARD_PORT: "47823",
@@ -171,6 +186,7 @@ if (args[0] === "app-server") {
     environmentCapturePath,
     otherWorkspace,
     service,
+    stubbornReadyPath,
     workspace,
     async close() {
       await this.service.close();
@@ -295,6 +311,28 @@ test("same-thread turns are locked, different threads run concurrently, failures
       ),
       true,
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("interrupt force-stops a SIGTERM-resistant turn and its descendant after the grace timeout", async () => {
+  const fixture = await createFixture();
+  try {
+    const thread = await fixture.service.createThread({ projectId: "project" });
+    const run = await fixture.service.startTurn(thread.id, { message: "WAIT_STUBBORN" });
+    await waitFor(async () => {
+      try {
+        return JSON.parse(await readFile(fixture.stubbornReadyPath, "utf8"));
+      } catch {
+        return null;
+      }
+    });
+
+    const interrupted = await fixture.service.interrupt(run.id);
+    assert.equal(interrupted.status, "interrupted");
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    await assert.rejects(readFile(fixture.descendantPath), (error) => error.code === "ENOENT");
   } finally {
     await fixture.close();
   }

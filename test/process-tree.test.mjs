@@ -8,6 +8,7 @@ import { test } from "node:test";
 import {
   PROCESS_STOP_RESULT,
   forceStopManagedChildTree,
+  forceStopOwnedUnixProcessGroup,
   isProcessRunning,
   stopManagedChildGracefully,
   terminateManagedChildTree,
@@ -82,6 +83,18 @@ test("PID liveness distinguishes missing and permission-denied processes", () =>
   }), true);
 });
 
+test("owned Unix process-group force stop validates the root PID", () => {
+  const signals = [];
+  forceStopOwnedUnixProcessGroup(4322, {
+    processKill: (...args) => signals.push(args),
+  });
+  assert.deepEqual(signals, [[-4322, "SIGKILL"]]);
+  assert.throws(
+    () => forceStopOwnedUnixProcessGroup("4322", { processKill: () => {} }),
+    /positive 32-bit integer/,
+  );
+});
+
 test("Windows graceful stop uses an owner request before any taskkill fallback", async () => {
   const child = Object.assign(new EventEmitter(), {
     pid: 4320,
@@ -139,6 +152,49 @@ test("Windows force fallback uses an absolute taskkill command without a shell",
   assert.equal(calls[0].options.shell, false);
   assert.equal(calls[0].options.windowsHide, true);
   assert.equal(fallbacks.length, 1);
+});
+
+test("detached Unix termination still forces the group after its root exits", async () => {
+  const child = Object.assign(new EventEmitter(), {
+    pid: 4324,
+    exitCode: null,
+    signalCode: null,
+    kill() {
+      throw new Error("detached Unix trees must use their owned process group");
+    },
+  });
+  let groupRunning = true;
+  const signals = [];
+  const processKill = (pid, signal) => {
+    assert.equal(pid, -4324);
+    if (signal === 0) {
+      if (!groupRunning) {
+        const error = new Error("missing");
+        error.code = "ESRCH";
+        throw error;
+      }
+      return;
+    }
+    signals.push(signal);
+    if (signal === "SIGTERM") {
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+    } else {
+      groupRunning = false;
+    }
+  };
+
+  assert.equal(
+    await terminateManagedChildTree(child, {
+      detached: true,
+      platform: "darwin",
+      processKill,
+      terminateTimeoutMs: 10,
+      killTimeoutMs: 100,
+    }),
+    PROCESS_STOP_RESULT.EXITED,
+  );
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
 });
 
 test("negative PIDs are isolated to the Unix process-group helper", () => {
