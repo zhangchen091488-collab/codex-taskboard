@@ -52,6 +52,7 @@ import {
   CdpPipeBrowser,
   validatedLoopbackCdpWebSocketUrl,
 } from "./codex-cdp-pipe.mjs";
+import { isCodexTarget } from "./codex-target-policy.mjs";
 import { runCodexTransportOnly } from "./codex-transport-only.mjs";
 
 const injectorPath = fileURLToPath(import.meta.url);
@@ -565,15 +566,6 @@ async function codexTargets(port) {
       ),
     };
   });
-}
-
-function isCodexTarget(target) {
-  return (
-      target.type === "page" &&
-      !target.url?.includes("initialRoute=%2Fglobal-dictation") &&
-      !target.url?.includes("initialRoute=%2Favatar-overlay") &&
-      (target.url?.startsWith("app://") || target.title === "Codex")
-  );
 }
 
 function tcpCdpRuntime(port) {

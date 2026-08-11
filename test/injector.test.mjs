@@ -11,6 +11,10 @@ const discoverySource = await readFile(
   new URL("../scripts/codex-injector-discovery.mjs", import.meta.url),
   "utf8",
 );
+const targetPolicySource = await readFile(
+  new URL("../scripts/codex-target-policy.mjs", import.meta.url),
+  "utf8",
+);
 const supervisorSource = await readFile(
   new URL("../scripts/taskboard-supervisor.mjs", import.meta.url),
   "utf8",
@@ -117,7 +121,9 @@ test("attach reconciles the renderer against a hashed current injection source",
 });
 
 test("the injector ignores auxiliary Codex windows", () => {
-  assert.match(source, /!target\.url\?\.includes\("initialRoute=%2Fglobal-dictation"\)/);
+  assert.match(source, /import \{ isCodexTarget \} from "\.\/codex-target-policy\.mjs"/);
+  assert.match(targetPolicySource, /!target\.url\?\.includes\("initialRoute=%2Fglobal-dictation"\)/);
+  assert.match(targetPolicySource, /!target\.url\?\.includes\("initialRoute=%2Favatar-overlay"\)/);
 });
 
 test("private-pipe injection visits every eligible renderer window and contains CSP failures", () => {
