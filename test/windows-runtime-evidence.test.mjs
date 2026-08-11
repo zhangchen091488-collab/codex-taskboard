@@ -76,7 +76,12 @@ function validEvidence() {
     "transport-probe": {
       ...base("transport-probe"),
       appVersion: "0.2.2",
-      sourceProfile: { beforeSha256: digest, afterSha256: digest, modified: false },
+      sourceProfile: {
+        beforeSha256: digest,
+        afterSha256: digest,
+        fileCount: 42,
+        modified: false,
+      },
       isolatedProfile: { initialized: true, destinationRemoved: true },
       credentialsIncluded: false,
       modes: {
@@ -155,6 +160,10 @@ test("runtime verifier rejects privilege, profile mutation and missing CDP capab
   const profileMutation = validEvidence();
   profileMutation["transport-probe"].sourceProfile.afterSha256 = "c".repeat(64);
   assert.throws(() => validateWindowsRuntimeEvidence(profileMutation));
+
+  const emptyProfile = validEvidence();
+  emptyProfile["transport-probe"].sourceProfile.fileCount = 0;
+  assert.throws(() => validateWindowsRuntimeEvidence(emptyProfile), /fingerprint is empty/);
 
   const missingPipe = validEvidence();
   missingPipe["transport-probe"].modes.pipe.ready = false;

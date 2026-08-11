@@ -83,6 +83,10 @@ function validateTransport(value) {
   assert.match(value.appVersion ?? "", VERSION);
   assert.match(value.sourceProfile?.beforeSha256 ?? "", SHA256);
   assert.equal(value.sourceProfile.afterSha256, value.sourceProfile.beforeSha256);
+  assert.ok(
+    Number.isSafeInteger(value.sourceProfile?.fileCount) && value.sourceProfile.fileCount > 0,
+    "transport-probe: source profile fingerprint is empty",
+  );
   assert.equal(value.sourceProfile?.modified, false);
   assert.equal(value.isolatedProfile?.initialized, true);
   assert.equal(value.isolatedProfile?.destinationRemoved, true);

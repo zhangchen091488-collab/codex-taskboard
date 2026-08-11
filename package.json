@@ -17,6 +17,7 @@
     "app:prepare": "npm run build:web && node scripts/prepare-tauri-app.mjs",
     "app:prepare:macos": "npm run build:web && node scripts/prepare-tauri-app.mjs --target universal-apple-darwin",
     "app:prepare:windows": "npm run build:web && node scripts/prepare-tauri-app.mjs --target x86_64-pc-windows-msvc",
+    "app:probe:windows-runtime": "node scripts/probe-windows-codex-transport.mjs",
     "app:dev": "npm run app:prepare && tauri dev",
     "app:build": "node scripts/build-tauri-app.mjs",
     "app:build:macos": "node scripts/build-tauri-app.mjs --target universal-apple-darwin",
