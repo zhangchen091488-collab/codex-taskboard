@@ -1,11 +1,19 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
+
+const npmCliPath = process.env.npm_execpath;
+if (!npmCliPath || !path.isAbsolute(npmCliPath)) {
+  throw new Error("Development startup requires npm run dev so npm_execpath is available");
+}
 
 const children = [
   spawn(process.execPath, ["--watch", "server/index.mjs", "--dev"], {
     stdio: "inherit",
   }),
-  spawn(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "dev:web"], {
+  spawn(process.execPath, [npmCliPath, "run", "dev:web"], {
     stdio: "inherit",
+    shell: false,
+    windowsHide: true,
   }),
 ];
 

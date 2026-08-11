@@ -1023,6 +1023,7 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
   const adapters = createWranglerCloudAdapters({
     remote: true,
     environment: { TASKBOARD_MIGRATION_REMOTE: "1" },
+    wranglerExecutable: "wrangler-fixture",
     runCommand: async (_executable, args) => {
       calls.push(args);
       const fileIndex = args.indexOf("--file");

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { test } from "node:test";
 
@@ -8,8 +9,13 @@ import {
   openExternal,
   openExternalCommand,
   resolveLocalBin,
+  resolveNodePackageBin,
   temporaryDirectoryPrefix,
 } from "../shared/platform-runtime.mjs";
+
+const injectorSource = await readFile(new URL("../scripts/codex-injector.mjs", import.meta.url), "utf8");
+const wranglerSource = await readFile(new URL("../scripts/wrangler-cloud-adapter.mjs", import.meta.url), "utf8");
+const devSource = await readFile(new URL("../scripts/dev.mjs", import.meta.url), "utf8");
 
 test("external URL commands use argument arrays without a shell", () => {
   const url = "https://example.com/docs?q=a%20b&from=任务面板";
@@ -125,4 +131,40 @@ test("local bin resolution selects cmd on Windows and direct files on POSIX", ()
     () => resolveLocalBin(posixRoot, "missing", { isFile: () => false }),
     /Local command 'missing' was not found/,
   );
+});
+
+test("Node package bins execute their JS entry through Node on Windows", () => {
+  const projectRoot = String.raw`C:\workspace with spaces\任务面板`;
+  const packageRoot = path.win32.join(projectRoot, "node_modules", "wrangler");
+  const entryPath = path.win32.join(packageRoot, "bin", "wrangler.js");
+  const command = resolveNodePackageBin(projectRoot, "wrangler", "wrangler", {
+    platform: "win32",
+    nodeExecutable: String.raw`C:\Program Files\Taskboard\node.exe`,
+    readManifest: () => ({ bin: { wrangler: "./bin/wrangler.js" } }),
+    isFile: (candidate) => candidate === entryPath,
+  });
+
+  assert.deepEqual(command, {
+    command: String.raw`C:\Program Files\Taskboard\node.exe`,
+    args: [entryPath],
+    options: { shell: false, windowsHide: true },
+  });
+  assert.throws(
+    () => resolveNodePackageBin(projectRoot, "wrangler", "wrangler", {
+      platform: "win32",
+      readManifest: () => ({ bin: { wrangler: "../../outside.js" } }),
+      isFile: () => true,
+    }),
+    /does not resolve to a local file/,
+  );
+});
+
+test("production URL and local CLI call sites use platform descriptors without shell strings", () => {
+  assert.match(injectorSource, /openExternal\(request\.url/);
+  assert.doesNotMatch(injectorSource, /spawn\("\/usr\/bin\/open"/);
+  assert.match(wranglerSource, /resolveNodePackageBin\(projectRoot, "wrangler"\)/);
+  assert.doesNotMatch(wranglerSource, /node_modules["'], ["']\.bin["'], ["']wrangler/);
+  assert.match(devSource, /process\.env\.npm_execpath/);
+  assert.match(devSource, /spawn\(process\.execPath, \[npmCliPath, "run", "dev:web"\]/);
+  assert.doesNotMatch(devSource, /npm\.cmd|shell:\s*true/);
 });

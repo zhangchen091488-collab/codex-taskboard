@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { accessSync, constants, statSync } from "node:fs";
+import { accessSync, constants, readFileSync, statSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +20,14 @@ function regularFile(candidate) {
     if (!statSync(candidate).isFile()) return false;
     accessSync(candidate, constants.X_OK);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function existingRegularFile(candidate) {
+  try {
+    return statSync(candidate).isFile();
   } catch {
     return false;
   }
@@ -117,4 +125,39 @@ export function resolveLocalBin(projectRoot, name, {
     if (isFile(candidate)) return candidate;
   }
   throw new Error(`Local command '${binName}' was not found under node_modules/.bin`);
+}
+
+export function resolveNodePackageBin(projectRoot, packageName, binName = packageName, {
+  platform = process.platform,
+  nodeExecutable = process.execPath,
+  readManifest = (manifestPath) => JSON.parse(readFileSync(manifestPath, "utf8")),
+  isFile = existingRegularFile,
+} = {}) {
+  const api = pathApi(platform);
+  const safePackageName = safeName(packageName, "Package name");
+  const safeBinName = safeName(binName, "Package command name");
+  const packageRoot = api.join(projectRoot, "node_modules", safePackageName);
+  const manifest = readManifest(api.join(packageRoot, "package.json"));
+  const relativeEntry = typeof manifest?.bin === "string"
+    ? manifest.bin
+    : manifest?.bin?.[safeBinName];
+  if (typeof relativeEntry !== "string" || !relativeEntry.trim()) {
+    throw new Error(`Package '${safePackageName}' does not define command '${safeBinName}'`);
+  }
+  const entryPath = api.resolve(packageRoot, relativeEntry);
+  const relative = api.relative(packageRoot, entryPath);
+  if (
+    relative === ""
+    || relative === ".."
+    || relative.startsWith(`..${api.sep}`)
+    || api.isAbsolute(relative)
+    || !isFile(entryPath)
+  ) {
+    throw new Error(`Package command '${safeBinName}' does not resolve to a local file`);
+  }
+  return {
+    command: nodeExecutable,
+    args: [entryPath],
+    options: { shell: false, windowsHide: true },
+  };
 }

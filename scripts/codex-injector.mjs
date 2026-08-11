@@ -15,6 +15,7 @@ import {
 } from "../shared/codex-app-launch.mjs";
 import { resolveCodexExecutable } from "../shared/codex-executable.mjs";
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
+import { openExternal } from "../shared/platform-runtime.mjs";
 import {
   acquireCodexProfileLease,
   initializeIndependentCodexProfile,
@@ -792,19 +793,9 @@ async function loadTaskboardFrameViaCdp(cdp, frameName, frameCapability) {
 }
 
 async function openExternalUrl(request) {
-  await new Promise((resolve, reject) => {
-    const child = spawn("/usr/bin/open", [request.url], {
-      detached: true,
-      env: withoutTaskboardLauncherEnvironment(process.env),
-      stdio: "ignore",
-    });
-    child.once("error", reject);
-    child.once("spawn", () => {
-      child.unref();
-      resolve();
-    });
+  return openExternal(request.url, {
+    environment: withoutTaskboardLauncherEnvironment(process.env),
   });
-  return { opened: true };
 }
 
 async function requestCodexAutomationViaCdp(cdp, executionContextId, method, params) {

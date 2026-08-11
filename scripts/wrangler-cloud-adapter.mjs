@@ -16,10 +16,10 @@ import {
   CLOUD_PROJECT_COUNTS_SQL,
   createCloudD1ImportSql,
 } from "./migrate-to-cloud.mjs";
+import { resolveNodePackageBin } from "../shared/platform-runtime.mjs";
 
 const execFile = promisify(execFileCallback);
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const defaultWrangler = path.join(projectRoot, "node_modules", ".bin", "wrangler");
 
 function parseD1Results(stdout) {
   const parsed = JSON.parse(stdout);
@@ -36,12 +36,13 @@ export function createWranglerCloudAdapters({
   remote,
   persistTo,
   configPath,
-  wranglerExecutable = defaultWrangler,
+  wranglerExecutable,
   database = "codex-taskboard-db",
   bucket = "codex-taskboard-attachments",
   preparedImportSql,
   environment = process.env,
   runCommand = execFile,
+  resolveWranglerCommand = () => resolveNodePackageBin(projectRoot, "wrangler"),
 } = {}) {
   const remoteEnabled = environment.TASKBOARD_MIGRATION_REMOTE === "1";
   const useRemote = remote ?? remoteEnabled;
@@ -63,6 +64,9 @@ export function createWranglerCloudAdapters({
   const modeArguments = useRemote
     ? ["--remote"]
     : ["--local", "--persist-to", path.resolve(resolvedPersistTo)];
+  const wranglerCommand = wranglerExecutable
+    ? { command: wranglerExecutable, args: [], options: { shell: false } }
+    : resolveWranglerCommand();
   const temporaryDirectory = mkdtemp(
     path.join(os.tmpdir(), "taskboard-wrangler-migration-"),
   ).then(async (directory) => {
@@ -73,11 +77,18 @@ export function createWranglerCloudAdapters({
   let sequence = 0;
 
   function run(args) {
-    const result = commandQueue.then(() => runCommand(wranglerExecutable, args, {
-      cwd: projectRoot,
-      encoding: "utf8",
-      maxBuffer: 16 * 1024 * 1024,
-    }));
+    const result = commandQueue.then(() => runCommand(
+      wranglerCommand.command,
+      [...wranglerCommand.args, ...args],
+      {
+        ...wranglerCommand.options,
+        cwd: projectRoot,
+        encoding: "utf8",
+        maxBuffer: 16 * 1024 * 1024,
+        shell: false,
+        windowsHide: true,
+      },
+    ));
     commandQueue = result.catch(() => {});
     return result;
   }
