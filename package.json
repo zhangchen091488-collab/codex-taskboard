@@ -30,6 +30,7 @@
     "app:verify:windows-updater": "node scripts/create-windows-updater.mjs",
     "app:verify:windows-vm": "node scripts/verify-windows-vm-matrix.mjs",
     "app:merge-updater-manifest": "node scripts/merge-updater-manifests.mjs",
+    "app:verify-updater-release": "node scripts/verify-release-updater.mjs",
     "app:verify-release": "node scripts/verify-macos-release.mjs",
     "tauri": "tauri",
     "dev": "node scripts/dev.mjs",

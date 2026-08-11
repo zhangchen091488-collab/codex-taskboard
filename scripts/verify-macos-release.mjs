@@ -18,6 +18,7 @@ import { verifyUpdaterSignature } from "./verify-updater-signature.mjs";
 import {
   createUpdaterManifest,
   DARWIN_UPDATER_PLATFORMS,
+  RELEASE_UPDATER_PLATFORMS,
 } from "./updater-manifest.mjs";
 
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
@@ -142,21 +143,37 @@ const darwinFragment = JSON.parse(await readFile(
   path.join(releaseDirectory, "darwin-updater.json"),
   "utf8",
 ));
+let windowsFragment = null;
+try {
+  windowsFragment = JSON.parse(await readFile(
+    path.join(releaseDirectory, "windows-updater.json"),
+    "utf8",
+  ));
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+const updaterFragments = windowsFragment
+  ? [darwinFragment, windowsFragment]
+  : [darwinFragment];
+const requiredPlatforms = windowsFragment
+  ? RELEASE_UPDATER_PLATFORMS
+  : DARWIN_UPDATER_PLATFORMS;
 const expectedLatest = createUpdaterManifest({
-  fragments: [darwinFragment],
+  fragments: updaterFragments,
   expectedVersion: packageJson.version,
-  requiredPlatforms: DARWIN_UPDATER_PLATFORMS,
+  requiredPlatforms,
   pubDate: latest.pub_date,
 });
 if (JSON.stringify(latest) !== JSON.stringify(expectedLatest)) {
-  throw new Error("latest.json does not match the verified Darwin updater fragment");
+  throw new Error("latest.json does not match the verified updater fragments");
 }
 const expectedUrl = `https://github.com/chuspeeism/dashi-taskboard/releases/download/${releaseTag}/${artifactName}`;
-const expectedPlatforms = DARWIN_UPDATER_PLATFORMS;
+const expectedPlatforms = [...requiredPlatforms];
 if (JSON.stringify(Object.keys(latest.platforms).sort()) !== JSON.stringify(expectedPlatforms.sort())) {
-  throw new Error("latest.json Darwin platform set is incorrect");
+  throw new Error("latest.json platform set is incorrect");
 }
-for (const platform of Object.values(latest.platforms)) {
+for (const platformName of DARWIN_UPDATER_PLATFORMS) {
+  const platform = latest.platforms[platformName];
   if (platform.url !== expectedUrl || platform.signature !== signature) {
     throw new Error("latest.json does not point every Darwin platform to the verified archive");
   }

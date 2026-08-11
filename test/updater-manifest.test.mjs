@@ -120,7 +120,13 @@ test("Darwin and Windows producers use the shared fragment contract", () => {
   assert.match(macProducerSource, /DARWIN_UPDATER_PLATFORMS/);
   assert.match(macProducerSource, /darwin-updater\.json/);
   assert.match(macProducerSource, /createUpdaterManifest/);
-  assert.match(macVerifierSource, /latest\.json does not match the verified Darwin updater fragment/);
+  assert.match(macVerifierSource, /windows-updater\.json/);
+  assert.match(macVerifierSource, /latest\.json does not match the verified updater fragments/);
+  assert.match(
+    macVerifierSource,
+    /const expectedPlatforms = \[\.\.\.requiredPlatforms\]/,
+    "release verification must not sort the frozen platform policy in place",
+  );
   const fragmentMentions = macReleaseWorkflow.match(/darwin-updater\.json/g) ?? [];
   assert.ok(
     fragmentMentions.length >= 3,
