@@ -13,6 +13,7 @@ test("Windows unsigned installer is current-user NSIS with bundled Node", async 
     bundle: "nsis",
     updaterArtifacts: false,
     bundledNode: true,
+    allowDowngrades: false,
     webview2: "downloadBootstrapper",
   });
 });
@@ -31,6 +32,7 @@ test("installer policy rejects machine-wide mode and unaudited uninstall hooks",
         targets: ["nsis"],
         icon: ["icons/icon.ico"],
         windows: {
+          allowDowngrades: false,
           webviewInstallMode: {
             type: "downloadBootstrapper",
             silent: true,
@@ -60,6 +62,13 @@ test("installer policy rejects machine-wide mode and unaudited uninstall hooks",
   assert.throws(
     () => validateWindowsInstallerConfiguration(machineWide),
     /machine-wide installation/,
+  );
+
+  const downgradeAllowed = structuredClone(baseInput);
+  downgradeAllowed.windowsConfig.bundle.windows.allowDowngrades = true;
+  assert.throws(
+    () => validateWindowsInstallerConfiguration(downgradeAllowed),
+    /reject accidental downgrades/,
   );
 
   const customUninstall = structuredClone(baseInput);

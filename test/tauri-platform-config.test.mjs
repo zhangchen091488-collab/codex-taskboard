@@ -53,6 +53,7 @@ test("macOS-only bundle fields do not leak into the Windows merge", () => {
   assert.deepEqual(windowsSnapshot.bundle.targets, ["nsis"]);
   assert.deepEqual(windowsSnapshot.bundle.icon, ["icons/icon.ico"]);
   assert.equal(windowsSnapshot.bundle.createUpdaterArtifacts, false);
+  assert.equal(windowsSnapshot.bundle.windows.allowDowngrades, false);
   assert.equal(macosSnapshot.bundle.windows, undefined);
   assert.deepEqual(windowsSnapshot.bundle.windows.webviewInstallMode, {
     type: "downloadBootstrapper",

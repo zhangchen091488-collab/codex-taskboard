@@ -24,6 +24,11 @@ export function validateWindowsInstallerConfiguration({
     "Windows NSIS must not require machine-wide installation",
   );
   assert.equal(
+    windowsConfig.bundle?.windows?.allowDowngrades,
+    false,
+    "Windows NSIS must reject accidental downgrades",
+  );
+  assert.equal(
     windowsConfig.bundle?.windows?.nsis?.installerIcon,
     "icons/icon.ico",
   );
@@ -88,6 +93,7 @@ export async function verifyWindowsInstallerConfiguration() {
     bundle: "nsis",
     updaterArtifacts: false,
     bundledNode: true,
+    allowDowngrades: false,
     webview2: "downloadBootstrapper",
   };
 }
