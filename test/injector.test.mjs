@@ -25,7 +25,11 @@ test("the resident injector authenticates its launcher-managed Taskboard service
   assert.match(source, /Page\.setDocumentContent/);
   assert.match(runtimeSource, /request\.action === "load-frame"/);
   assert.match(supervisorSource, /ensureInFlight/);
-  assert.match(supervisorSource, /await terminateManagedChild\(managedChild\)/);
+  assert.match(
+    supervisorSource,
+    /await terminateManagedChild\(managedChild, \{ detached, platform \}\)/,
+  );
+  assert.match(supervisorSource, /type: "codex-taskboard:shutdown"/);
   assert.match(source, /await supervisor\.ensure\(\)/);
   assert.match(source, /it will be restarted automatically/);
   assert.match(source, /AbortSignal\.timeout\(1_500\)/);

@@ -37,6 +37,7 @@ function startServer(dataDirectory, port) {
       CODEX_TASKBOARD_PORT: String(port),
       CODEX_TASKBOARD_INSTANCE_TOKEN: instanceToken,
       CODEX_TASKBOARD_INSTANCE_SECRET: instanceSecret,
+      CODEX_TASKBOARD_LAUNCHER_READINESS: "1",
     },
     silent: true,
   });
@@ -102,6 +103,25 @@ test("server reports its actual port over IPC only after listening", async () =>
       assert.ok(!readStdout().includes(sensitiveValue));
       assert.ok(!readStderr().includes(sensitiveValue));
     }
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    await waitForExit(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("launcher IPC performs a versioned graceful server shutdown", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-readiness-shutdown-"));
+  const child = startServer(directory, 0);
+  capture(child.stdout);
+  capture(child.stderr);
+  try {
+    const readiness = await waitForTaskboardReadiness(child, 5_000);
+    child.send({ type: "codex-taskboard:shutdown", version: 2 });
+    await connectToLoopback(readiness.port);
+    child.send({ type: "codex-taskboard:shutdown", version: 1 });
+    await waitForExit(child);
+    assert.equal(child.exitCode, 0);
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     await waitForExit(child);

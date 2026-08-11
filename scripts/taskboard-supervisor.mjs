@@ -1,7 +1,20 @@
 import { createTaskboardReadinessTracker } from "../shared/taskboard-readiness.mjs";
+import {
+  isManagedChildRunning,
+  terminateManagedChildTree,
+} from "../shared/process-tree.mjs";
 
-function isRunning(child) {
-  return Boolean(child && child.exitCode === null && child.signalCode === null);
+const isRunning = isManagedChildRunning;
+const TASKBOARD_SHUTDOWN_MESSAGE = Object.freeze({
+  type: "codex-taskboard:shutdown",
+  version: 1,
+});
+
+function requestGracefulTaskboardShutdown(child) {
+  if (!child?.connected || typeof child.send !== "function") return;
+  return new Promise((resolve) => {
+    child.send(TASKBOARD_SHUTDOWN_MESSAGE, () => resolve());
+  });
 }
 
 export function taskboardChildStdio({ detached }) {
@@ -57,42 +70,19 @@ export function waitForTaskboardReadiness(child, timeoutMs) {
   });
 }
 
-function waitForExit(child, timeoutMs) {
-  if (!isRunning(child)) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (exited) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      child.removeListener("exit", handleExit);
-      resolve(exited);
-    };
-    const handleExit = () => finish(true);
-    const timer = setTimeout(() => finish(false), timeoutMs);
-    timer.unref?.();
-    child.once("exit", handleExit);
-    if (!isRunning(child)) finish(true);
-  });
-}
-
 export async function terminateManagedChild(
   child,
-  { terminateTimeoutMs = 3_000, killTimeoutMs = 1_000 } = {},
+  options = {},
 ) {
-  if (!isRunning(child)) return;
-  const terminated = waitForExit(child, terminateTimeoutMs);
-  child.kill("SIGTERM");
-  if (await terminated) return;
-
-  if (isRunning(child)) child.kill("SIGKILL");
-  if (!(await waitForExit(child, killTimeoutMs)) && isRunning(child)) {
-    throw new Error("Taskboard process did not exit after SIGKILL");
-  }
+  return terminateManagedChildTree(child, {
+    requestGraceful: requestGracefulTaskboardShutdown,
+    ...options,
+  });
 }
 
 export function createTaskboardSupervisor({
   detached,
+  platform = process.platform,
   isReachable,
   waitUntilReachable,
   waitForReadiness = waitForTaskboardReadiness,
@@ -122,7 +112,7 @@ export function createTaskboardSupervisor({
           await waitUntilReachable(3_000);
           return { status: "ok", restarted: false };
         } catch (_) {}
-        await terminateManagedChild(managedChild);
+        await terminateManagedChild(managedChild, { detached, platform });
         if (child === managedChild) child = null;
       }
 
@@ -145,7 +135,7 @@ export function createTaskboardSupervisor({
         retryAfter = 0;
         return { status: "ok", restarted: true, readiness };
       } catch (error) {
-        await terminateManagedChild(started).catch(() => {});
+        await terminateManagedChild(started, { detached, platform }).catch(() => {});
         if (child === started) child = null;
         retryAfter = Date.now() + 2_000;
         throw error;
@@ -162,7 +152,7 @@ export function createTaskboardSupervisor({
   async function stop() {
     stopping = true;
     const managedChild = child;
-    await terminateManagedChild(managedChild);
+    await terminateManagedChild(managedChild, { detached, platform });
     if (child === managedChild) child = null;
   }
 

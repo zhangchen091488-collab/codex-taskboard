@@ -20,6 +20,7 @@ class ManagedChild extends EventEmitter {
     super();
     this.name = name;
     this.events = events;
+    this.pid = 10_000 + Number(name.split("-").at(-1));
     this.exitCode = null;
     this.signalCode = null;
   }
@@ -48,6 +49,7 @@ test("an unhealthy live child exits before its replacement starts", async () => 
   let sequence = 0;
   const supervisor = createTaskboardSupervisor({
     detached: false,
+    platform: "darwin",
     isReachable: async () => false,
     waitUntilReachable: async (timeoutMs) => {
       events.push(["health", timeoutMs]);

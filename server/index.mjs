@@ -36,7 +36,20 @@ async function sendReadiness(message) {
   await new Promise((resolve, reject) => {
     process.send(message, (error) => error ? reject(error) : resolve());
   });
-  process.disconnect?.();
+  if (process.env.CODEX_TASKBOARD_LAUNCHER_READINESS !== "1") {
+    process.disconnect?.();
+  }
+}
+
+export function isShutdownMessage(message) {
+  return Boolean(
+    message
+    && typeof message === "object"
+    && !Array.isArray(message)
+    && message.type === "codex-taskboard:shutdown"
+    && message.version === 1
+    && Object.keys(message).length === 2
+  );
 }
 
 function sanitizedStartupError(error, environment = process.env) {
@@ -74,6 +87,11 @@ async function main() {
   };
   process.once("SIGINT", () => close().then(() => process.exit(0)));
   process.once("SIGTERM", () => close().then(() => process.exit(0)));
+  if (process.env.CODEX_TASKBOARD_LAUNCHER_READINESS === "1") {
+    process.on("message", (message) => {
+      if (isShutdownMessage(message)) close().then(() => process.exit(0));
+    });
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -31,7 +31,7 @@ Platform errors identify the failed operation, retain an optional native error c
 | AI turn owner | Node counterpart created for each turn root | User cancel, timeout, parent disconnect | Graceful timeout only | Completion event removes the active turn |
 | Project summary/catalog helpers | Short-lived Node counterpart | Request completion or shutdown | Bounded fallback only | Exit event removes the helper |
 
-The Rust trait in `src-tauri/src/platform/process_tree.rs` applies directly to launcher/updater ownership. WIN-044 will provide the Node counterpart with the same `AlreadyExited` / `Exited` / `TimedOut` semantics; Node code does not implement or bridge to the Rust trait.
+The Rust trait in `src-tauri/src/platform/process_tree.rs` applies directly to launcher/updater ownership. The Node counterpart in `shared/process-tree.mjs` uses the matching `already-exited` / `exited` / `timed-out` results without bridging Rust types. It validates every PID before signaling, uses negative PIDs only for an explicitly detached Unix process group, and requests graceful Windows Taskboard shutdown over versioned IPC. Windows `taskkill.exe /PID <pid> /T /F` is an absolute-path, shell-free, logged force fallback after the graceful deadline; it is not a discovery mechanism.
 
 ## Out of scope for this contract
 
