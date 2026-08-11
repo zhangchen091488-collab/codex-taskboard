@@ -121,6 +121,68 @@ function File-Evidence([string]$InstalledPath, [string]$SourcePath) {
   }
 }
 
+function Executable-Evidence(
+  [string]$ExecutablePath,
+  [string]$ExpectedProductName,
+  [string]$ExpectedProductVersion
+) {
+  $resolved = (Resolve-Path -LiteralPath $ExecutablePath).Path
+  $bytes = [System.IO.File]::ReadAllBytes($resolved)
+  if ($bytes.Length -lt 64 -or $bytes[0] -ne 0x4d -or $bytes[1] -ne 0x5a) {
+    throw "Launcher is not a PE executable: $ExecutablePath"
+  }
+  $peOffset = [System.BitConverter]::ToInt32($bytes, 0x3c)
+  if (
+    $peOffset -lt 0 -or
+    $peOffset + 6 -gt $bytes.Length -or
+    [System.BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550
+  ) {
+    throw "Launcher has an invalid PE header: $ExecutablePath"
+  }
+  $machine = [System.BitConverter]::ToUInt16($bytes, $peOffset + 4)
+  if ($machine -ne 0x8664) {
+    throw "Launcher must target x86_64, got PE machine 0x$($machine.ToString('x4'))"
+  }
+
+  $item = Get-Item -LiteralPath $resolved
+  $productName = [string]$item.VersionInfo.ProductName
+  $productVersion = [string]$item.VersionInfo.ProductVersion
+  if ($productName -ne $ExpectedProductName) {
+    throw "Launcher product name mismatch: $productName"
+  }
+  if ($productVersion -ne $ExpectedProductVersion) {
+    throw "Launcher product version mismatch: $productVersion"
+  }
+  $signature = Get-AuthenticodeSignature -LiteralPath $resolved
+  if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned) {
+    throw "PR launcher must be unsigned, got $($signature.Status)"
+  }
+  return [ordered]@{
+    length = $item.Length
+    sha256 = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash.ToLowerInvariant()
+    peMachine = "x86_64"
+    productName = $productName
+    productVersion = $productVersion
+    signatureStatus = [string]$signature.Status
+  }
+}
+
+function Launcher-Evidence([string]$InstalledPath, [string]$SourcePath) {
+  $installed = Executable-Evidence $InstalledPath $ProductName $ExpectedVersion
+  $source = Executable-Evidence $SourcePath $ProductName $ExpectedVersion
+  return [ordered]@{
+    relativePath = [System.IO.Path]::GetRelativePath($InstallDirectory, $InstalledPath)
+    length = $installed.length
+    sha256 = $installed.sha256
+    peMachine = $installed.peMachine
+    productName = $installed.productName
+    productVersion = $installed.productVersion
+    signatureStatus = $installed.signatureStatus
+    stagedSha256 = $source.sha256
+    matchesStagedSource = $installed.sha256 -eq $source.sha256
+  }
+}
+
 $resolvedProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 $resolvedSetup = (Resolve-Path -LiteralPath $SetupPath).Path
 $setupItem = Get-Item -LiteralPath $resolvedSetup
@@ -168,11 +230,10 @@ try {
     throw "Installed NSIS entry has no InstallLocation"
   }
   $InstallDirectory = (Resolve-Path -LiteralPath $InstallDirectory).Path
+  $installedFiles += Launcher-Evidence `
+    (Join-Path $InstallDirectory "codex-taskboard-launcher.exe") `
+    (Join-Path $resolvedProjectRoot "src-tauri\target\x86_64-pc-windows-msvc\release\codex-taskboard-launcher.exe")
   $expectedFiles = @(
-    @{
-      installed = "codex-taskboard-launcher.exe"
-      source = "src-tauri\target\x86_64-pc-windows-msvc\release\codex-taskboard-launcher.exe"
-    },
     @{
       installed = "node.exe"
       source = "src-tauri\binaries\node-x86_64-pc-windows-msvc.exe"

@@ -41,6 +41,11 @@ test("NSIS verifier is CI-only, exact-targeted and compares installed payload by
   assert.match(verifier, /ConvertFrom-RegistryPathValue \$candidate/);
   assert.match(verifier, /hive -ne "HKCU"/);
   assert.match(verifier, /SignatureStatus\]::NotSigned/);
+  assert.match(verifier, /function Executable-Evidence/);
+  assert.match(verifier, /\$machine -ne 0x8664/);
+  assert.match(verifier, /productName -ne \$ExpectedProductName/);
+  assert.match(verifier, /productVersion -ne \$ExpectedProductVersion/);
+  assert.match(verifier, /matchesStagedSource = \$installed\.sha256 -eq \$source\.sha256/);
   assert.match(verifier, /Installed bundle file differs from staged source/);
   assert.match(verifier, /nodeVersion -ne "v22\.23\.2"/);
   assert.match(verifier, /Start-Process -FilePath \$uninstaller -ArgumentList "\/S"/);
