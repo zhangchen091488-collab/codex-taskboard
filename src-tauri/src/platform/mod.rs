@@ -4,6 +4,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub mod process_tree;
+
 pub struct AppDirectories {
     pub data: PathBuf,
     pub logs: PathBuf,
