@@ -2,19 +2,25 @@
 
 mod platform;
 
-use serde::{Deserialize, Serialize};
+#[cfg(target_os = "macos")]
+use serde::Deserialize;
+use serde::Serialize;
 #[cfg(target_os = "macos")]
 use std::os::{fd::AsRawFd, unix::process::CommandExt};
 use std::{
     fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Write},
-    net::TcpListener,
+    io::Write,
     path::{Path, PathBuf},
-    process::{Command as StdCommand, Stdio},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
+};
+#[cfg(target_os = "macos")]
+use std::{
+    io::{BufRead, BufReader},
+    net::TcpListener,
+    process::{Command as StdCommand, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -25,9 +31,12 @@ use tauri::{
 };
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::{Update, UpdaterExt};
+#[cfg(target_os = "macos")]
 use uuid::Uuid;
 
+#[cfg(target_os = "macos")]
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(target_os = "macos")]
 const TASKBOARD_LISTEN_FD: i32 = 5;
 
 #[derive(Clone, Serialize)]
@@ -42,6 +51,7 @@ struct LauncherSnapshot {
     child_pid: Option<u32>,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LauncherPidRecord {
@@ -58,9 +68,11 @@ struct LauncherState {
     update_in_progress: AtomicBool,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
+    #[cfg(target_os = "macos")]
     taskboard_listener: Mutex<Option<TcpListener>>,
     data_directory: PathBuf,
     log_path: PathBuf,
+    #[cfg(target_os = "macos")]
     pid_record_path: PathBuf,
 }
 
@@ -82,7 +94,9 @@ impl LauncherState {
             update_in_progress: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
+            #[cfg(target_os = "macos")]
             taskboard_listener: Mutex::new(None),
+            #[cfg(target_os = "macos")]
             pid_record_path: data_directory.join("launcher-child.json"),
             data_directory,
             log_path: log_directory.join("codex-taskboard-launcher.log"),
@@ -104,6 +118,7 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Erro
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
 fn taskboard_listener(state: &LauncherState) -> Result<(i32, u16), String> {
     let mut listener = state.taskboard_listener.lock().unwrap();
     if listener.is_none() {
@@ -150,6 +165,7 @@ fn show_error_dialog(app: &AppHandle, title: &str, message: &str) {
         .blocking_show();
 }
 
+#[cfg(target_os = "macos")]
 fn find_codex_app(home_directory: &Path) -> Option<PathBuf> {
     [
         PathBuf::from("/Applications/ChatGPT.app"),
@@ -161,6 +177,7 @@ fn find_codex_app(home_directory: &Path) -> Option<PathBuf> {
     .find(|candidate| candidate.is_dir())
 }
 
+#[cfg(target_os = "macos")]
 fn send_process_group_signal(pid: u32, signal: i32) {
     unsafe {
         if libc::kill(-(pid as i32), signal) != 0 {
@@ -169,10 +186,12 @@ fn send_process_group_signal(pid: u32, signal: i32) {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn process_group_is_running(pid: u32) -> bool {
     unsafe { libc::kill(-(pid as i32), 0) == 0 }
 }
 
+#[cfg(target_os = "macos")]
 fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
     while process_group_is_running(pid) && Instant::now() < deadline {
@@ -181,6 +200,7 @@ fn wait_for_process_group_exit(pid: u32, timeout: Duration) -> bool {
     !process_group_is_running(pid)
 }
 
+#[cfg(target_os = "macos")]
 fn terminate_process_group(pid: u32) {
     send_process_group_signal(pid, libc::SIGTERM);
     if !wait_for_process_group_exit(pid, STOP_TIMEOUT) {
@@ -189,6 +209,7 @@ fn terminate_process_group(pid: u32) {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn process_matches_record(record: &LauncherPidRecord) -> bool {
     let output = StdCommand::new("/bin/ps")
         .args(["-p", &record.pid.to_string(), "-o", "command="])
@@ -202,6 +223,7 @@ fn process_matches_record(record: &LauncherPidRecord) -> bool {
         && command.contains(&*record.injector_path.to_string_lossy())
 }
 
+#[cfg(target_os = "macos")]
 fn stop_recorded_child(state: &LauncherState) {
     let record = fs::read_to_string(&state.pid_record_path)
         .ok()
@@ -214,6 +236,7 @@ fn stop_recorded_child(state: &LauncherState) {
     let _ = fs::remove_file(&state.pid_record_path);
 }
 
+#[cfg(target_os = "macos")]
 fn write_pid_record(
     state: &LauncherState,
     pid: u32,
@@ -229,6 +252,7 @@ fn write_pid_record(
     fs::write(&state.pid_record_path, content).map_err(|error| error.to_string())
 }
 
+#[cfg(target_os = "macos")]
 fn clear_pid_record(state: &LauncherState, pid: u32) {
     let matches = fs::read_to_string(&state.pid_record_path)
         .ok()
@@ -244,8 +268,16 @@ fn stop_managed_child_locked(app: &AppHandle, state: &Arc<LauncherState>) {
     state.intentional_stop.store(true, Ordering::SeqCst);
     if let Some(pid) = state.child.lock().unwrap().take() {
         append_log(state, &format!("Stopping launcher child {pid}"));
-        terminate_process_group(pid);
-        clear_pid_record(state, pid);
+        #[cfg(target_os = "macos")]
+        {
+            terminate_process_group(pid);
+            clear_pid_record(state, pid);
+        }
+        #[cfg(target_os = "windows")]
+        append_log(
+            state,
+            "Windows child state exists before the process lifecycle backend is implemented",
+        );
     }
     update_snapshot(app, state, |snapshot| {
         snapshot.phase = "stopped".into();
@@ -259,6 +291,7 @@ fn stop_managed_child(app: &AppHandle, state: &Arc<LauncherState>) {
     stop_managed_child_locked(app, state);
 }
 
+#[cfg(target_os = "macos")]
 fn watch_launcher_output<R: std::io::Read + Send + 'static>(
     reader: R,
     is_stderr: bool,
@@ -288,6 +321,7 @@ fn watch_launcher_output<R: std::io::Read + Send + 'static>(
     });
 }
 
+#[cfg(target_os = "macos")]
 fn start_launcher_locked(
     app: &AppHandle,
     state: &Arc<LauncherState>,
@@ -452,6 +486,24 @@ fn start_launcher_locked(
         }
     });
     Ok(snapshot)
+}
+
+#[cfg(target_os = "windows")]
+fn start_launcher_locked(
+    app: &AppHandle,
+    state: &Arc<LauncherState>,
+) -> Result<LauncherSnapshot, String> {
+    let resource_directory = app
+        .path()
+        .resource_dir()
+        .map_err(|error| error.to_string())?;
+    let inherited_path = std::env::var_os("PATH");
+    platform::launcher_path(&resource_directory, inherited_path.as_deref())
+        .map_err(|error| format!("无法构造任务面板 PATH：{error}"))?;
+    let data_directory = state.data_directory.display();
+    Err(format!(
+        "Windows launcher backend is not implemented yet (data directory: {data_directory})"
+    ))
 }
 
 fn start_launcher(app: &AppHandle, state: &Arc<LauncherState>) -> Result<LauncherSnapshot, String> {

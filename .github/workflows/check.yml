@@ -60,3 +60,28 @@ jobs:
         run: >-
           npm run app:preflight --
           "src-tauri/target/universal-apple-darwin/release/bundle/macos/Codex Taskboard.app"
+
+  windows-launcher-check:
+    name: Windows launcher compile
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          toolchain: 1.88.0
+      - run: npm ci
+      - name: Prepare check-only Windows resource placeholders
+        shell: pwsh
+        run: |
+          New-Item -ItemType File -Force src-tauri/binaries/node-x86_64-pc-windows-msvc.exe
+          npm run tauri -- icon src-tauri/icons/icon.png --output "$env:RUNNER_TEMP/taskboard-icons"
+          Copy-Item "$env:RUNNER_TEMP/taskboard-icons/icon.ico" src-tauri/icons/icon.ico
+      - name: Check the Windows launcher target
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
