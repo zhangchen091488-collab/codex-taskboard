@@ -70,17 +70,7 @@ export async function verifyWindowsInstallerConfiguration() {
     readFile(path.join(projectRoot, "src-tauri", "tauri.conf.json"), "utf8").then(JSON.parse),
     readFile(path.join(projectRoot, "src-tauri", "tauri.windows.conf.json"), "utf8").then(JSON.parse),
   ]);
-  await Promise.all([
-    access(path.join(projectRoot, "src-tauri", "icons", "icon.ico")),
-    access(
-      path.join(
-        projectRoot,
-        "src-tauri",
-        "binaries",
-        "node-x86_64-pc-windows-msvc.exe",
-      ),
-    ),
-  ]);
+  await access(path.join(projectRoot, "src-tauri", "icons", "icon.ico"));
   const buildPlan = createTauriBuildPlan([], {
     hostPlatform: "win32",
     nodeExecutable: process.execPath,

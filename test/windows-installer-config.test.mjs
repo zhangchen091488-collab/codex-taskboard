@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 import {
   validateWindowsInstallerConfiguration,
   verifyWindowsInstallerConfiguration,
 } from "../scripts/verify-windows-installer-config.mjs";
+
+const verifierSource = await readFile(
+  new URL("../scripts/verify-windows-installer-config.mjs", import.meta.url),
+  "utf8",
+);
 
 test("Windows unsigned installer is current-user NSIS with bundled Node", async () => {
   assert.deepEqual(await verifyWindowsInstallerConfiguration(), {
@@ -16,6 +22,11 @@ test("Windows unsigned installer is current-user NSIS with bundled Node", async 
     allowDowngrades: false,
     webview2: "downloadBootstrapper",
   });
+});
+
+test("installer policy does not require an ignored staged binary in common Node CI", () => {
+  assert.match(verifierSource, /externalBin\?\.includes\("binaries\/node"\)/);
+  assert.doesNotMatch(verifierSource, /access\([\s\S]*node-x86_64-pc-windows-msvc\.exe/);
 });
 
 test("installer policy rejects machine-wide mode and unaudited uninstall hooks", () => {
