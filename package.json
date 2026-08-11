@@ -27,6 +27,7 @@
     "app:verify-packaged-taskctl": "node scripts/verify-packaged-taskctl.mjs",
     "app:verify:windows-resources": "node scripts/verify-windows-resources.mjs",
     "app:verify:windows-installer": "node scripts/verify-windows-installer-config.mjs",
+    "app:verify:windows-runtime": "node scripts/verify-windows-runtime-evidence.mjs",
     "app:verify:windows-updater": "node scripts/create-windows-updater.mjs",
     "app:verify:windows-vm": "node scripts/verify-windows-vm-matrix.mjs",
     "app:merge-updater-manifest": "node scripts/merge-updater-manifests.mjs",
