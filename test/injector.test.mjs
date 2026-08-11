@@ -120,6 +120,15 @@ test("the injector ignores auxiliary Codex windows", () => {
   assert.match(source, /!target\.url\?\.includes\("initialRoute=%2Fglobal-dictation"\)/);
 });
 
+test("Codex exit handling uses one normal-idle versus crash-restart decision", () => {
+  assert.match(runtimeSource, /function codexProcessDisposition/);
+  assert.match(source, /codexProcessDisposition\(codexProcess\)/);
+  assert.match(source, /CODEX_PROCESS_DISPOSITION\.IDLE/);
+  assert.match(source, /CODEX_PROCESS_DISPOSITION\.RUNNING/);
+  assert.match(source, /idleAfterNormalExit = true/);
+  assert.doesNotMatch(source, /launchedCodex\?\.exitCode === 0/);
+});
+
 test("a completed web build refreshes an already-open Codex iframe", () => {
   assert.match(packageJson.scripts.build, /--refresh-if-running/);
   assert.match(packageJson.scripts["codex:refresh"], /--refresh/);

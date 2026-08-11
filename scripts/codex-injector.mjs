@@ -19,6 +19,8 @@ import {
   formatLauncherReadinessLine,
 } from "../shared/taskboard-readiness.mjs";
 import {
+  CODEX_PROCESS_DISPOSITION,
+  codexProcessDisposition,
   handleHostBindingPayload,
   reconcileInjectionRuntime,
   restartResidentInjector,
@@ -1732,7 +1734,7 @@ async function main() {
         }
       } catch (error) {
         if (stopping) break;
-        if (options.cdpPipe && !cdpRuntime.isHealthy()) {
+        if (options.cdpPipe && !cdpRuntime?.isHealthy()) {
           const launchedCodex = codexProcess;
           if (
             launchedCodex
@@ -1744,35 +1746,23 @@ async function main() {
               new Promise((resolve) => setTimeout(resolve, 250)),
             ]);
           }
-          if (launchedCodex?.exitCode === 0) {
-            injectedTargets.forEach((connection) => {
-              unregisterQuotaPolicyCdp(connection);
-              connection.close();
-            });
-            injectedTargets.clear();
-            cdpRuntime.close();
-            cdpRuntime = null;
-            codexProcess = null;
-            idleAfterNormalExit = true;
-            console.error(
-              "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
-            );
-            continue;
-          }
-          throw error;
+          if (
+            codexProcessDisposition(codexProcess)
+            === CODEX_PROCESS_DISPOSITION.RUNNING
+          ) throw error;
         }
-        const launchedCodexExited = codexProcess
-          && (codexProcess.exitCode !== null || codexProcess.signalCode !== null);
-        if (launchedCodexExited) {
+        const disposition = codexProcessDisposition(codexProcess);
+        if (disposition !== CODEX_PROCESS_DISPOSITION.RUNNING) {
           injectedTargets.forEach((connection) => {
             unregisterQuotaPolicyCdp(connection);
             connection.close();
           });
           injectedTargets.clear();
           cdpRuntime?.close();
-          const exitCode = codexProcess.exitCode;
+          cdpRuntime = null;
           codexProcess = null;
-          if (exitCode === 0) {
+          if (disposition === CODEX_PROCESS_DISPOSITION.IDLE) {
+            idleAfterNormalExit = true;
             console.error(
               "Waiting for Codex after normal exit; open Codex Taskboard again to restart it.",
             );

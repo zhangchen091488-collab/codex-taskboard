@@ -119,6 +119,20 @@ test("Windows process-tree lifecycle owns a kill-on-close Job Object", () => {
   );
 });
 
+test("app exit and OS session teardown both request managed-tree cleanup", () => {
+  assert.match(
+    launcherSource,
+    /RunEvent::ExitRequested[\s\S]*stop_managed_child_locked\(app_handle, &state\)/,
+  );
+  assert.match(
+    launcherSource,
+    /RunEvent::Exit[\s\S]*stop_managed_child\(app_handle, &state\)/,
+  );
+  assert.match(macosPlatformSource, /impl Drop for MacProcessTree/);
+  assert.match(windowsPlatformSource, /impl Drop for WindowsProcessTree/);
+  assert.match(windowsPlatformSource, /JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE/);
+});
+
 test("stale launcher recovery requires a versioned nonce and live loopback health", () => {
   assert.doesNotMatch(launcherSource, /\/bin\/ps|process_matches_record/);
   assert.match(launcherSource, /verify_recorded_launcher/);
@@ -165,6 +179,11 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
   assert.match(checkWorkflow, /Unexpected Windows Node sidecar version/);
   assert.match(checkWorkflow, /npm run app:verify:windows-resources/);
   assert.match(checkWorkflow, /windows-taskctl-wrapper\.ps1 -ProjectRoot/);
+  assert.match(checkWorkflow, /node --test[\s\S]*test\/process-lifecycle-matrix\.test\.mjs/);
+  assert.match(
+    checkWorkflow,
+    /cargo test --locked --manifest-path src-tauri\/Cargo\.toml --target x86_64-pc-windows-msvc/,
+  );
   assert.doesNotMatch(checkWorkflow, /check-only Windows icon placeholder/);
   assert.doesNotMatch(checkWorkflow, /New-Item -ItemType File.*node-x86_64-pc-windows-msvc\.exe/);
 });

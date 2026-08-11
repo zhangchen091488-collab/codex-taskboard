@@ -87,6 +87,51 @@ test("an unhealthy live child exits before its replacement starts", async () => 
   await supervisor.stop();
 });
 
+test("a crashed child is cleared before one replacement starts", async () => {
+  const events = [];
+  const children = [];
+  let sequence = 0;
+  let reachable = false;
+  const supervisor = createTaskboardSupervisor({
+    detached: false,
+    platform: "darwin",
+    isReachable: async () => reachable,
+    waitUntilReachable: async () => {
+      reachable = true;
+    },
+    waitForReadiness: async (child) => {
+      events.push(["ready", child.name]);
+      return listeningReadiness(47823);
+    },
+    start: () => {
+      const child = new ManagedChild(`child-${++sequence}`, events);
+      children.push(child);
+      events.push(["start", child.name]);
+      return child;
+    },
+    onUnexpectedExit: (code, signal) => events.push(["crash", code, signal]),
+  });
+
+  await supervisor.ensure({ force: true });
+  const crashed = children[0];
+  crashed.exitCode = 9;
+  crashed.emit("exit", 9, null);
+  await Promise.resolve();
+  reachable = false;
+  await supervisor.ensure({ force: true });
+
+  assert.equal(children.length, 2);
+  assert.deepEqual(events.slice(0, 5), [
+    ["start", "child-1"],
+    ["ready", "child-1"],
+    ["crash", 9, null],
+    ["start", "child-2"],
+    ["ready", "child-2"],
+  ]);
+  assert.equal(events.some((event) => event[0] === "kill" && event[1] === "child-1"), false);
+  await supervisor.stop();
+});
+
 test("readiness schema accepts only versioned loopback terminal messages", () => {
   assert.deepEqual(parseTaskboardReadiness(listeningReadiness(49152)), {
     type: "codex-taskboard:readiness",

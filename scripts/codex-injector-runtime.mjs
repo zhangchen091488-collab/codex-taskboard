@@ -1,6 +1,21 @@
 const HOST_REQUEST_ERROR = "自动认领配置暂时无法应用，请刷新后重试";
 const AUTOMATION_SCHEMA_DIAGNOSTIC = "AUTOMATION_SCHEMA_MISMATCH";
 
+export const CODEX_PROCESS_DISPOSITION = Object.freeze({
+  RUNNING: "running",
+  IDLE: "idle",
+  RESTART: "restart",
+});
+
+export function codexProcessDisposition(child) {
+  if (!child || (child.exitCode === null && child.signalCode === null)) {
+    return CODEX_PROCESS_DISPOSITION.RUNNING;
+  }
+  return child.exitCode === 0 && child.signalCode === null
+    ? CODEX_PROCESS_DISPOSITION.IDLE
+    : CODEX_PROCESS_DISPOSITION.RESTART;
+}
+
 function parseHostRequest(payload, parseAutomationRequest) {
   if (typeof payload !== "string" || payload.length > 4_096) {
     return { id: null, request: null, error: HOST_REQUEST_ERROR };
