@@ -74,4 +74,6 @@ test("isolated browser regressions validate complete DOM output after a timed Ch
     assert.doesNotMatch(fixture, /throw error/);
     assert.match(fixture, /if \(!stdout\.trim\(\)\)/);
   }
+  assert.match(fixtures[0], /embeddedHostSource\.replaceAll\("export function ", "function "\)/);
+  assert.doesNotMatch(fixtures[0], /data:text\/javascript/);
 });

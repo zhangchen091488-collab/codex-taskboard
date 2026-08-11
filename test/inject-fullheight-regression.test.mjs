@@ -26,7 +26,7 @@ const embeddedHostSource = await readFile(
   new URL("../web/src/embeddedHost.mjs", import.meta.url),
   "utf8",
 );
-const embeddedHostDataUrl = `data:text/javascript;base64,${Buffer.from(embeddedHostSource).toString("base64")}`;
+const embeddedHostInlineSource = embeddedHostSource.replaceAll("export function ", "function ");
 
 function fixtureHtml(origin) {
   const encodedSource = Buffer.from(source).toString("base64");
@@ -107,22 +107,22 @@ function fixtureHtml(origin) {
           const request = event.data.payload;
           if (request.action === "load-frame") {
             const frame = document.querySelector('iframe[name="' + request.frameName + '"]');
-            const moduleUrl = ${JSON.stringify(embeddedHostDataUrl)};
+            const moduleSource = ${JSON.stringify(embeddedHostInlineSource)};
             frame.srcdoc = '<a id="external-link" href="https://example.com/review" target="_blank">Review</a>'
-              + '<script type="module">import * as host from ' + JSON.stringify(moduleUrl) + ';'
+              + '<script type="module">' + moduleSource + ';'
               + 'globalThis.__CODEX_TASKBOARD_FRAME_CAPABILITY__='
               + JSON.stringify(request.frameCapability)
-              + ';host.installEmbeddedExternalLinkHandler();'
+              + ';installEmbeddedExternalLinkHandler();'
               + 'let activated=false,acknowledgedChallenge="";window.addEventListener("message",function(event){'
               + 'if(event.data?.type!=="taskboard:frame-challenge")return;'
               + 'const challenge=event.data.payload?.challenge;if(!challenge||challenge===acknowledgedChallenge)return;'
-              + 'acknowledgedChallenge=challenge;host.setEmbeddedFrameChallenge(challenge);'
-              + 'host.postEmbeddedHostMessage({type:"taskboard:ready"});'
+              + 'acknowledgedChallenge=challenge;setEmbeddedFrameChallenge(challenge);'
+              + 'postEmbeddedHostMessage({type:"taskboard:ready"});'
               + 'if(activated)return;activated=true;'
               + 'parent.postMessage({type:"taskboard:ready"},"*");'
               + 'parent.postMessage({type:"taskboard:open-thread",payload:{threadId:"forged"}},"*");'
               + 'document.getElementById("external-link").click();'
-              + '});host.postEmbeddedHostMessage({type:"taskboard:frame-awaiting-challenge"});<\\/script>';
+              + '});postEmbeddedHostMessage({type:"taskboard:frame-awaiting-challenge"});<\\/script>';
           }
           if (request.action === "open-external") {
             window.__externalOpenUrl = request.url;
