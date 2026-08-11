@@ -128,8 +128,14 @@ jobs:
             throw "Expected one unsigned NSIS setup, found $($setups.Count)"
           }
           $version = node -p "require('./package.json').version"
-          .\scripts\verify-windows-nsis-bundle.ps1 `
-            -SetupPath $setups[0].FullName `
-            -ExpectedVersion $version `
-            -EvidencePath .\src-tauri\target\windows-nsis-evidence.json
+          try {
+            .\scripts\verify-windows-nsis-bundle.ps1 `
+              -SetupPath $setups[0].FullName `
+              -ExpectedVersion $version `
+              -EvidencePath .\src-tauri\target\windows-nsis-evidence.json
+          } catch {
+            $message = $_.Exception.Message.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Output "::error file=scripts/verify-windows-nsis-bundle.ps1,title=Windows NSIS verification failed::$message"
+            throw
+          }
           Get-Content .\src-tauri\target\windows-nsis-evidence.json

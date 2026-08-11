@@ -19,6 +19,8 @@ test("Windows launcher CI builds, installs, verifies and uninstalls the real NSI
   assert.match(source, /verify-windows-nsis-bundle\.ps1/);
   assert.match(source, /\*-setup\.exe/);
   assert.match(source, /windows-nsis-evidence\.json/);
+  assert.match(source, /::error file=scripts\/verify-windows-nsis-bundle\.ps1/);
+  assert.match(source, /Windows NSIS verification failed/);
   assert.doesNotMatch(
     source,
     /continue-on-error|upload-artifact|TAURI_SIGNING_PRIVATE_KEY|WINDOWS_CERTIFICATE|secrets\./,
