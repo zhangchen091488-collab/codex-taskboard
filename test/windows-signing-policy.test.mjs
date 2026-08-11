@@ -23,6 +23,10 @@ const tamperScript = await readFile(
   new URL("../scripts/test-windows-authenticode-tamper.ps1", import.meta.url),
   "utf8",
 );
+const releaseStagingScript = await readFile(
+  new URL("../scripts/stage-windows-release.ps1", import.meta.url),
+  "utf8",
+);
 const windowsConfig = await readFile(
   new URL("../src-tauri/tauri.windows.conf.json", import.meta.url),
   "utf8",
@@ -108,5 +112,15 @@ test("protected import and verification scripts enforce signer identity and time
   assert.match(tamperScript, /verification unexpectedly accepted/);
   assert.match(tamperScript, /finally/);
   assert.doesNotMatch(tamperScript, /WriteAllBytes\(\$resolvedArtifact/);
+
+  assert.match(releaseStagingScript, /x86_64-pc-windows-msvc\\release/);
+  assert.match(releaseStagingScript, /codex-taskboard-launcher\.exe/);
+  assert.match(releaseStagingScript, /Expected exactly one Windows NSIS setup/);
+  assert.match(releaseStagingScript, /verify-windows-authenticode\.ps1/);
+  assert.match(releaseStagingScript, /test-windows-authenticode-tamper\.ps1/);
+  assert.match(releaseStagingScript, /create-windows-updater\.mjs/);
+  assert.match(releaseStagingScript, /windows-updater\.json/);
+  assert.match(releaseStagingScript, /unexpected asset set/);
+  assert.doesNotMatch(releaseStagingScript, /Remove-Item|Invoke-Expression|cmd\.exe/);
   assert.doesNotMatch(windowsConfig, /certificateThumbprint|timestampUrl|signCommand/);
 });
