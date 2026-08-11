@@ -26,8 +26,11 @@ if ($ExpectedVersion -notmatch '^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$') {
 
 $ProductName = "Codex Taskboard"
 
-function String-Property($Object, [string]$Name) {
-  $property = $Object.PSObject.Properties[$Name]
+function String-Property([AllowNull()]$InputObject, [string]$Name) {
+  if ($null -eq $InputObject) {
+    return $null
+  }
+  $property = [System.Management.Automation.PSObject]::AsPSObject($InputObject).Properties[$Name]
   if ($null -eq $property -or $null -eq $property.Value) {
     return $null
   }

@@ -32,6 +32,8 @@ test("NSIS verifier is CI-only, exact-targeted and compares installed payload by
   assert.match(verifier, /RUNNER_TEMP/);
   assert.match(verifier, /DisplayName/);
   assert.match(verifier, /Codex Taskboard/);
+  assert.match(verifier, /PSObject\]::AsPSObject\(\$InputObject\)\.Properties\[\$Name\]/);
+  assert.match(verifier, /if \(\$null -eq \$InputObject\)/);
   assert.match(verifier, /hive -ne "HKCU"/);
   assert.match(verifier, /SignatureStatus\]::NotSigned/);
   assert.match(verifier, /Installed bundle file differs from staged source/);
