@@ -26,13 +26,14 @@ import {
   runCli,
   writeCloudMigrationBundle,
 } from "../scripts/migrate-to-cloud.mjs";
+import { resolveNodePackageBin } from "../shared/platform-runtime.mjs";
 import { createCloudWorkerHarness } from "./helpers/cloud-worker-harness.mjs";
 
 const fixtures = [];
 const timestamp = "2026-07-24T12:00:00.000Z";
 const execFile = promisify(execFileCallback);
 const projectRoot = path.resolve(import.meta.dirname, "..");
-const wranglerExecutable = path.join(projectRoot, "node_modules", ".bin", "wrangler");
+const wranglerCommand = resolveNodePackageBin(projectRoot, "wrangler");
 const wranglerConfig = path.join(projectRoot, "wrangler.jsonc");
 
 afterEach(async () => {
@@ -936,16 +937,18 @@ test("versioned bundle round-trips through private manifest, data, and attachmen
 
   await writeCloudMigrationBundle(bundle, outputDirectory);
 
-  assert.equal((await stat(outputDirectory)).mode & 0o777, 0o700);
-  assert.equal((await stat(path.join(outputDirectory, "data"))).mode & 0o777, 0o700);
-  assert.equal(
-    (await stat(path.join(outputDirectory, "attachments"))).mode & 0o777,
-    0o700,
-  );
-  assert.equal(
-    (await stat(path.join(outputDirectory, "manifest.json"))).mode & 0o777,
-    0o600,
-  );
+  if (process.platform !== "win32") {
+    assert.equal((await stat(outputDirectory)).mode & 0o777, 0o700);
+    assert.equal((await stat(path.join(outputDirectory, "data"))).mode & 0o777, 0o700);
+    assert.equal(
+      (await stat(path.join(outputDirectory, "attachments"))).mode & 0o777,
+      0o700,
+    );
+    assert.equal(
+      (await stat(path.join(outputDirectory, "manifest.json"))).mode & 0o777,
+      0o600,
+    );
+  }
 
   const restored = await readCloudMigrationBundle(outputDirectory);
   assert.deepEqual(restored.counts, bundle.counts);
@@ -1067,8 +1070,11 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
       assert.ok(!args.includes("--persist-to"));
     }
     for (const filename of transferFiles) {
-      assert.equal((await stat(filename)).mode & 0o777, 0o600);
-      assert.equal((await stat(path.dirname(filename))).mode & 0o777, 0o700);
+      assert.equal((await stat(filename)).isFile(), true);
+      if (process.platform !== "win32") {
+        assert.equal((await stat(filename)).mode & 0o777, 0o600);
+        assert.equal((await stat(path.dirname(filename))).mode & 0o777, 0o700);
+      }
     }
   } finally {
     await adapters.cleanup();
@@ -1124,7 +1130,8 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
   const adapterPath = path.join(projectRoot, "scripts", "wrangler-cloud-adapter.mjs");
 
   async function applyMigrations(persistTo) {
-    await execFile(wranglerExecutable, [
+    await execFile(wranglerCommand.command, [
+      ...wranglerCommand.args,
       "d1",
       "migrations",
       "apply",

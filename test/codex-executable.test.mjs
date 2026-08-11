@@ -105,7 +105,7 @@ test("Windows PATH lookup accepts a real cmd file", {
 
 test("desktop App discovery stays macOS-only", () => {
   const appPath = "/Applications/Codex.app";
-  const bundled = path.join(appPath, "Contents", "Resources", "codex");
+  const bundled = path.posix.join(appPath, "Contents", "Resources", "codex");
 
   assert.equal(resolveCodexExecutable({
     explicit: "",

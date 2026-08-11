@@ -100,6 +100,7 @@ test("temporary directory prefixes use the selected platform path rules", async 
 
   const calls = [];
   assert.equal(await createTemporaryDirectory("migration", {
+    platform: "darwin",
     temporaryRoot: "/tmp/root with spaces",
     makeTemporaryDirectory: async (prefix) => {
       calls.push(prefix);

@@ -105,7 +105,11 @@ test("cloud config persists Basic Auth credentials and device mappings in a mode
       portfolio: "/Users/alice/Documents/portfolio",
     },
   });
-  assert.equal((await stat(configPath)).mode & 0o777, 0o600);
+  const configStat = await stat(configPath);
+  assert.equal(configStat.isFile(), true);
+  if (process.platform !== "win32") {
+    assert.equal(configStat.mode & 0o777, 0o600);
+  }
   assert.deepEqual(JSON.parse(await readFile(configPath, "utf8")), await store.read());
 });
 
@@ -696,6 +700,8 @@ test("taskctl cloud login reads the shared key privately and sends it to the loc
 });
 
 test("taskctl cloud status, logout, and project map use local companion endpoints", async () => {
+  const workspaceRoot = path.resolve(path.parse(process.cwd()).root, "work");
+  const portfolioWorkspace = path.join(workspaceRoot, "portfolio");
   const calls = [];
   const fetchImplementation = async (url, init) => {
     calls.push({ url: url.toString(), init });
@@ -713,7 +719,7 @@ test("taskctl cloud status, logout, and project map use local companion endpoint
     if (url.pathname === "/api/local/project-mappings/portfolio" && init.method === "PUT") {
       return jsonResponse({
         projectId: "portfolio",
-        workspacePath: "/work/portfolio",
+        workspacePath: portfolioWorkspace,
       });
     }
     return jsonResponse({ error: { code: "UNEXPECTED", message: url.toString() } }, 500);
@@ -732,7 +738,7 @@ test("taskctl cloud status, logout, and project map use local companion endpoint
   )).exitCode, 0);
   assert.equal((await runCli(
     ["project", "map", "portfolio", "--workspace-path", "./portfolio"],
-    { fetch: fetchImplementation, cwd: "/work", env: companionEnv },
+    { fetch: fetchImplementation, cwd: workspaceRoot, env: companionEnv },
   )).exitCode, 0);
 
   assert.deepEqual(calls.map(({ url, init }) => [url, init.method]), [
@@ -741,7 +747,7 @@ test("taskctl cloud status, logout, and project map use local companion endpoint
     ["http://127.0.0.1:49000/api/local/project-mappings/portfolio", "PUT"],
   ]);
   assert.deepEqual(JSON.parse(calls[2].init.body), {
-    workspacePath: "/work/portfolio",
+    workspacePath: portfolioWorkspace,
   });
 });
 

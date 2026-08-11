@@ -9,11 +9,11 @@ export function codexAppExecutablePath(appPath, {
   platform = process.platform,
 } = {}) {
   if (platform === "win32") return path.win32.normalize(appPath);
-  return path.join(
+  return path.posix.join(
     appPath,
     "Contents",
     "MacOS",
-    path.basename(appPath, ".app"),
+    path.posix.basename(appPath, ".app"),
   );
 }
 

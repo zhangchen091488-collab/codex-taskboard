@@ -19,6 +19,7 @@ export function createInjectorDevelopmentDiscovery({
 }) {
   const supportsAutomaticPortDiscovery = platform === "darwin";
   const commandEnv = withoutTaskboardLauncherEnvironment(env);
+  const platformPath = platform === "win32" ? path.win32 : path.posix;
 
   function debuggingPorts(
     preferredPort,
@@ -65,7 +66,7 @@ export function createInjectorDevelopmentDiscovery({
     });
     if (result.status !== 0) return null;
     const cwd = result.stdout.split("\n").find((line) => line.startsWith("n"))?.slice(1);
-    return cwd ? path.resolve(cwd) : null;
+    return cwd ? platformPath.resolve(cwd) : null;
   }
 
   function residentInjectorPids(port) {

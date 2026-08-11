@@ -4,10 +4,10 @@ import path from "node:path";
 
 const DEFAULT_WINDOWS_PATHEXT = ".COM;.EXE;.BAT;.CMD";
 
-function executableFile(candidate) {
+function executableFile(candidate, platform) {
   try {
     if (!statSync(candidate).isFile()) return false;
-    accessSync(candidate, constants.X_OK);
+    accessSync(candidate, platform === "win32" ? constants.F_OK : constants.X_OK);
     return true;
   } catch {
     return false;
@@ -54,7 +54,7 @@ function executableOnPath(env, platform, isExecutable) {
 }
 
 export function codexExecutableInApp(appPath) {
-  return path.join(appPath, "Contents", "Resources", "codex");
+  return path.posix.join(appPath, "Contents", "Resources", "codex");
 }
 
 export function resolveCodexExecutable({
@@ -63,23 +63,28 @@ export function resolveCodexExecutable({
   env = process.env,
   platform = process.platform,
   homeDirectory = os.homedir(),
-  isExecutable = executableFile,
+  isExecutable,
 } = {}) {
+  const checkExecutable = isExecutable
+    ?? ((candidate) => executableFile(candidate, platform));
   if (typeof explicit === "string" && explicit.trim()) return explicit.trim();
 
   if (appPath && platform === "darwin") {
     const bundled = codexExecutableInApp(appPath);
-    if (isExecutable(bundled)) return bundled;
+    if (checkExecutable(bundled)) return bundled;
   }
 
-  const installedCli = executableOnPath(env, platform, isExecutable);
+  const installedCli = executableOnPath(env, platform, checkExecutable);
   if (installedCli) return installedCli;
 
   if (platform === "darwin") {
-    for (const applicationDirectory of ["/Applications", path.join(homeDirectory, "Applications")]) {
+    for (const applicationDirectory of [
+      "/Applications",
+      path.posix.join(homeDirectory, "Applications"),
+    ]) {
       for (const applicationName of ["ChatGPT.app", "Codex.app"]) {
         const bundled = codexExecutableInApp(path.join(applicationDirectory, applicationName));
-        if (isExecutable(bundled)) return bundled;
+        if (checkExecutable(bundled)) return bundled;
       }
     }
   }
