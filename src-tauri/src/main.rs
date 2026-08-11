@@ -5,6 +5,7 @@ pub mod platform;
 #[cfg(target_os = "macos")]
 mod readiness;
 mod transport_readiness;
+mod update_state;
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 use platform::{
