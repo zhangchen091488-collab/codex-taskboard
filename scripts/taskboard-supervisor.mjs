@@ -1,5 +1,65 @@
+import { createTaskboardReadinessTracker } from "../shared/taskboard-readiness.mjs";
+
 function isRunning(child) {
   return Boolean(child && child.exitCode === null && child.signalCode === null);
+}
+
+export function taskboardChildStdio({ detached, listenFd }) {
+  const standardIo = detached ? "ignore" : "inherit";
+  if (listenFd === null) return [standardIo, standardIo, standardIo, "ipc"];
+  return Array.from({ length: listenFd + 2 }, (_, fd) => {
+    if (fd === listenFd) return "inherit";
+    if (fd === listenFd + 1) return "ipc";
+    return fd < 3 ? standardIo : "ignore";
+  });
+}
+
+export function waitForTaskboardReadiness(child, timeoutMs) {
+  const tracker = createTaskboardReadinessTracker();
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let pendingMessage = null;
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.removeListener("message", handleMessage);
+      child.removeListener("error", handleError);
+      child.removeListener("exit", handleExit);
+      if (error) reject(error);
+      else resolve(value);
+    };
+    const settleMessage = () => {
+      if (!pendingMessage || settled) return;
+      if (pendingMessage.status === "error") {
+        finish(new Error(`Taskboard startup failed: ${pendingMessage.code}`));
+      } else {
+        finish(null, pendingMessage);
+      }
+    };
+    const handleMessage = (message) => {
+      try {
+        pendingMessage = tracker.accept(message);
+        queueMicrotask(settleMessage);
+      } catch (error) {
+        finish(error);
+      }
+    };
+    const handleError = (error) => finish(error);
+    const handleExit = (code, signal) => finish(
+      new Error(`Taskboard exited before readiness (${signal || code})`),
+    );
+    const timer = setTimeout(() => {
+      try {
+        tracker.timeout();
+      } catch (error) {
+        finish(error);
+      }
+    }, timeoutMs);
+    child.on("message", handleMessage);
+    child.once("error", handleError);
+    child.once("exit", handleExit);
+  });
 }
 
 function waitForExit(child, timeoutMs) {
@@ -40,6 +100,7 @@ export function createTaskboardSupervisor({
   detached,
   isReachable,
   waitUntilReachable,
+  waitForReadiness = waitForTaskboardReadiness,
   start,
   onProcessError = () => {},
   onUnexpectedExit = () => {},
@@ -82,10 +143,13 @@ export function createTaskboardSupervisor({
       });
 
       try {
+        const readiness = await waitForReadiness(started, 10_000);
         await waitUntilReachable(10_000);
         retryAfter = 0;
-        return { status: "ok", restarted: true };
+        return { status: "ok", restarted: true, readiness };
       } catch (error) {
+        await terminateManagedChild(started).catch(() => {});
+        if (child === started) child = null;
         retryAfter = Date.now() + 2_000;
         throw error;
       }

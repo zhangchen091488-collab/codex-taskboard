@@ -21,7 +21,10 @@ import {
   restartResidentInjector,
 } from "./codex-injector-runtime.mjs";
 import { readCodexQuotaStatus } from "./codex-rate-limits.mjs";
-import { createTaskboardSupervisor } from "./taskboard-supervisor.mjs";
+import {
+  createTaskboardSupervisor,
+  taskboardChildStdio,
+} from "./taskboard-supervisor.mjs";
 import {
   CdpPipeBrowser,
   validatedLoopbackCdpWebSocketUrl,
@@ -200,16 +203,10 @@ async function waitUntilTaskboardReachable(timeoutMs) {
 }
 
 function startTaskboard({ detached }) {
-  const stdio = taskboardListenFd === null
-    ? (detached ? "ignore" : "inherit")
-    : Array.from(
-      { length: taskboardListenFd + 1 },
-      (_, fd) => (fd === taskboardListenFd ? "inherit" : (fd < 3 && !detached ? "inherit" : "ignore")),
-    );
   return spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
     cwd: projectRoot,
     detached,
-    stdio,
+    stdio: taskboardChildStdio({ detached, listenFd: taskboardListenFd }),
   });
 }
 

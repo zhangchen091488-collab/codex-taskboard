@@ -1,6 +1,7 @@
 import os from "node:os";
 import { pathToFileURL } from "node:url";
 
+import { errorReadiness, listeningReadiness } from "../shared/taskboard-readiness.mjs";
 import {
   createTaskboardServer,
   resolveHost,
@@ -33,10 +34,30 @@ export function resolveStartupListenOptions(environment = process.env) {
   return { host, port, fd };
 }
 
+async function sendReadiness(message) {
+  if (typeof process.send !== "function" || !process.connected) return;
+  await new Promise((resolve, reject) => {
+    process.send(message, (error) => error ? reject(error) : resolve());
+  });
+  process.disconnect?.();
+}
+
+function sanitizedStartupError(error, environment = process.env) {
+  let output = error instanceof Error ? (error.stack || error.message) : String(error);
+  for (const sensitiveValue of [
+    environment.CODEX_TASKBOARD_INSTANCE_TOKEN,
+    environment.CODEX_TASKBOARD_INSTANCE_SECRET,
+  ]) {
+    if (sensitiveValue) output = output.replaceAll(sensitiveValue, "[redacted]");
+  }
+  return output;
+}
+
 async function main() {
   const app = createTaskboardServer();
   const listenOptions = resolveStartupListenOptions();
   const address = await app.listen(listenOptions);
+  await sendReadiness(listeningReadiness(address.port));
   console.log(`Codex Taskboard listening on http://127.0.0.1:${address.port}`);
   if (listenOptions.host === "0.0.0.0") {
     const addresses = Object.values(os.networkInterfaces())
@@ -59,8 +80,9 @@ async function main() {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((error) => {
-    console.error(error);
+  main().catch(async (error) => {
+    await sendReadiness(errorReadiness()).catch(() => {});
+    console.error(sanitizedStartupError(error));
     process.exitCode = 1;
   });
 }
