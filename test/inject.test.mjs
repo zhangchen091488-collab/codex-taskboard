@@ -9,11 +9,12 @@ const sourceUrl = new URL("../inject/codex-taskboard.user.js", import.meta.url);
 const source = await readFile(sourceUrl, "utf8");
 const webStyles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const webApp = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
+const webTypes = await readFile(new URL("../web/src/types.ts", import.meta.url), "utf8");
 const embeddedHost = await readFile(new URL("../web/src/embeddedHost.mjs", import.meta.url), "utf8");
 
 test("injection is an idempotent IIFE guarded by its current source hash", () => {
   assert.match(source, /^\(\(\) => \{/);
-  assert.match(source, /const VERSION = "0\.6\.13"/);
+  assert.match(source, /const VERSION = "0\.6\.14"/);
   assert.match(source, /const SOURCE_HASH = window\.__CODEX_TASKBOARD_SOURCE_HASH__/);
   assert.match(source, /const SENTINEL_KEY = "__codexTaskboardInjection__"/);
   assert.match(source, /previous\?\.sourceHash === SOURCE_HASH/);
@@ -103,6 +104,31 @@ test("the embedded header clears the macOS window controls when the Codex sideba
   assert.match(source, /titlebarLeftInset: titlebarLeftInset\(\)/);
   assert.match(webApp, /--codex-titlebar-left-inset/);
   assert.match(webStyles, /padding-left: calc\(16px \+ var\(--codex-titlebar-left-inset, 0px\)\)/);
+});
+
+test("the embedded host applies macOS and Windows titlebar rules through an explicit platform contract", () => {
+  assert.match(source, /function hostPlatformFamily\(\)/);
+  assert.match(source, /userAgentData\?\.platform/);
+  assert.match(source, /return "windows"/);
+  assert.match(source, /return "macos"/);
+  assert.match(source, /HOST_PLATFORM_FAMILY !== "macos"/);
+  assert.match(source, /platformFamily: HOST_PLATFORM_FAMILY/);
+  assert.match(source, /data-codex-taskboard-host-platform/);
+  assert.match(webTypes, /platformFamily\?: "macos" \| "windows" \| "other"/);
+  assert.match(webApp, /host-\$\{hostContext\?\.platformFamily \?\? "other"\}/);
+  assert.match(webStyles, /\.app-shell\.embedded\.host-windows \.home-window-drag-region \{[\s\S]*?left: 0/);
+  assert.match(webStyles, /\.app-shell\.embedded\.host-windows \.workspace-header \{[\s\S]*?padding-left: 16px/);
+});
+
+test("renderer drag regions are clamped to the current page after resize or DPI zoom", () => {
+  const dragSource = source.slice(
+    source.indexOf("function updateDragRegion"),
+    source.indexOf("function createPage"),
+  );
+  assert.match(dragSource, /const pageWidth = Math\.max\(0, page\.clientWidth\)/);
+  assert.match(dragSource, /Math\.min\(pageWidth, Math\.max\(0, x\)\)/);
+  assert.match(dragSource, /const clampedWidth = right - left/);
+  assert.match(dragSource, /dragRegion\.style\.width = `\$\{clampedWidth\}px`/);
 });
 
 test("the embedded header exposes Codex's native sidebar expansion when collapsed", () => {

@@ -449,6 +449,10 @@ kbd {
   -webkit-app-region: drag;
 }
 
+.app-shell.embedded.host-windows .home-window-drag-region {
+  left: 0;
+}
+
 .workspace-header {
   display: flex;
   flex: 0 0 44px;
@@ -460,6 +464,10 @@ kbd {
   padding-left: calc(16px + var(--codex-titlebar-left-inset, 0px));
   border-bottom: var(--border-hairline) solid var(--border);
   background: transparent;
+}
+
+.app-shell.embedded.host-windows .workspace-header {
+  padding-left: 16px;
 }
 
 .workspace-drag-region {

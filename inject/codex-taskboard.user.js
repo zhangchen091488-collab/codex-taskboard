@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const VERSION = "0.6.13";
+  const VERSION = "0.6.14";
   const SOURCE_HASH = window.__CODEX_TASKBOARD_SOURCE_HASH__;
   const SENTINEL_KEY = "__codexTaskboardInjection__";
   const DEFAULT_TASKBOARD_URL = "http://127.0.0.1:47823/?host=codex";
@@ -85,6 +85,19 @@
   let suspendedNativeBrowserPanel = null;
   let active = false;
   let destroyed = false;
+
+  function hostPlatformFamily() {
+    const platform = [
+      navigator.userAgentData?.platform,
+      navigator.platform,
+      navigator.userAgent,
+    ].filter(Boolean).join(" ");
+    if (/Windows|Win32|Win64/i.test(platform)) return "windows";
+    if (/macOS|Macintosh|MacIntel|Mac OS X/i.test(platform)) return "macos";
+    return "other";
+  }
+
+  const HOST_PLATFORM_FAMILY = hostPlatformFamily();
 
   function normalizedLabel(value) {
     return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
@@ -481,7 +494,7 @@
   }
 
   function titlebarLeftInset() {
-    if (!/Macintosh|Mac OS X/.test(navigator.userAgent)) return 0;
+    if (HOST_PLATFORM_FAMILY !== "macos") return 0;
     if (nativeSidebarCollapsed()) return MACOS_TITLEBAR_SAFE_LEFT;
     const surfaceLeft = findPageMount()?.surface.getBoundingClientRect().left;
     if (!Number.isFinite(surfaceLeft)) return 0;
@@ -635,6 +648,7 @@
       theme: currentTheme(),
       projects,
       user: readCodexUser() ?? undefined,
+      platformFamily: HOST_PLATFORM_FAMILY,
       titlebarLeftInset: titlebarLeftInset(),
       sidebarCollapsed: nativeSidebarCollapsed(),
     };
@@ -949,11 +963,19 @@
       noDragRight.hidden = true;
       return;
     }
-    const left = Math.max(0, x);
-    const right = left + width;
+    const pageWidth = Math.max(0, page.clientWidth);
+    const left = Math.min(pageWidth, Math.max(0, x));
+    const right = Math.min(pageWidth, Math.max(left, left + width));
+    const clampedWidth = right - left;
+    if (clampedWidth <= 0) {
+      dragRegion.hidden = true;
+      noDragLeft.hidden = true;
+      noDragRight.hidden = true;
+      return;
+    }
     dragRegion.style.left = `${left}px`;
     dragRegion.style.top = `${Math.max(0, y)}px`;
-    dragRegion.style.width = `${width}px`;
+    dragRegion.style.width = `${clampedWidth}px`;
     dragRegion.style.height = `${height}px`;
     noDragLeft.style.left = "0";
     noDragLeft.style.top = `${Math.max(0, y)}px`;
@@ -975,6 +997,7 @@
     section.setAttribute(OWNED_ATTRIBUTE, "true");
     section.setAttribute("role", "region");
     section.setAttribute("aria-label", "任务面板");
+    section.setAttribute("data-codex-taskboard-host-platform", HOST_PLATFORM_FAMILY);
 
     status = document.createElement("div");
     status.id = STATUS_ID;

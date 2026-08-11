@@ -2258,9 +2258,15 @@ export function App() {
   const appShellStyle = embedded
     ? { "--codex-titlebar-left-inset": `${hostContext?.titlebarLeftInset ?? 0}px` } as CSSProperties
     : undefined;
+  const embeddedPlatformClass = embedded
+    ? ` host-${hostContext?.platformFamily ?? "other"}`
+    : "";
 
   return (
-    <div className={`app-shell${embedded ? " embedded" : ""}`} style={appShellStyle}>
+    <div
+      className={`app-shell${embedded ? " embedded" : ""}${embeddedPlatformClass}`}
+      style={appShellStyle}
+    >
       {taskboardMetadata && taskboardMetadata.mode !== "cloud" && (
         <LocalRealtimeSync
           selectedProjectId={selectedProjectId}

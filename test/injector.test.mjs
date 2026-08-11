@@ -120,6 +120,16 @@ test("the injector ignores auxiliary Codex windows", () => {
   assert.match(source, /!target\.url\?\.includes\("initialRoute=%2Fglobal-dictation"\)/);
 });
 
+test("private-pipe injection visits every eligible renderer window and contains CSP failures", () => {
+  assert.match(source, /targets: async \(\) => \(await browser\.targets\(\)\)[\s\S]*?\.filter\(isCodexTarget\)/);
+  assert.match(source, /for \(const target of targets\) \{[\s\S]*?injectTarget\(/);
+  assert.match(source, /if \(injectedTargets\.has\(target\.id\)\) continue/);
+  assert.match(source, /evaluation\.exceptionDetails/);
+  assert.match(source, /Taskboard injection failed/);
+  assert.match(source, /if \(!options\.watch\) throw error/);
+  assert.match(source, /Waiting for Codex renderer/);
+});
+
 test("Codex exit handling uses one normal-idle versus crash-restart decision", () => {
   assert.match(runtimeSource, /function codexProcessDisposition/);
   assert.match(source, /codexProcessDisposition\(codexProcess\)/);

@@ -298,6 +298,7 @@ export interface HostContext {
   theme?: "light" | "dark";
   projectId?: string;
   projects?: Array<{ id: string; name: string }>;
+  platformFamily?: "macos" | "windows" | "other";
   titlebarLeftInset?: number;
   sidebarCollapsed?: boolean;
   threadRunning?: boolean;
