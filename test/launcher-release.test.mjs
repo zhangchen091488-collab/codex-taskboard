@@ -46,7 +46,14 @@ test("the launcher uses standard app directories without abandoning existing mac
 });
 
 test("the macOS launcher uses one instance, serialized lifecycle changes, and a private CDP pipe", () => {
-  assert.match(launcherSource, /libc::flock/);
+  const singleInstancePlugin = launcherSource.indexOf("tauri_plugin_single_instance::init");
+  const dialogPlugin = launcherSource.indexOf("tauri_plugin_dialog::init");
+
+  assert.ok(singleInstancePlugin >= 0);
+  assert.ok(singleInstancePlugin < dialogPlugin);
+  assert.doesNotMatch(launcherSource, /libc::flock/);
+  assert.doesNotMatch(launcherSource, /launcher\.lock/);
+  assert.doesNotMatch(launcherSource, /_instance_lock/);
   assert.match(launcherSource, /lifecycle: Mutex/);
   assert.match(launcherSource, /generation: AtomicU64/);
   assert.match(launcherSource, /TcpListener::bind\(\("127\.0\.0\.1", 0\)\)/);

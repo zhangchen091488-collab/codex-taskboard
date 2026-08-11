@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "macos")]
 use std::os::{fd::AsRawFd, unix::process::CommandExt};
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{BufRead, BufReader, Write},
     net::TcpListener,
     path::{Path, PathBuf},
@@ -59,19 +59,13 @@ struct LauncherState {
     generation: AtomicU64,
     lifecycle: Mutex<()>,
     taskboard_listener: Mutex<Option<TcpListener>>,
-    _instance_lock: File,
     data_directory: PathBuf,
     log_path: PathBuf,
     pid_record_path: PathBuf,
 }
 
 impl LauncherState {
-    fn new(
-        data_directory: PathBuf,
-        log_directory: PathBuf,
-        version: String,
-        instance_lock: File,
-    ) -> Self {
+    fn new(data_directory: PathBuf, log_directory: PathBuf, version: String) -> Self {
         Self {
             child: Mutex::new(None),
             snapshot: Mutex::new(LauncherSnapshot {
@@ -89,29 +83,9 @@ impl LauncherState {
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
             taskboard_listener: Mutex::new(None),
-            _instance_lock: instance_lock,
             pid_record_path: data_directory.join("launcher-child.json"),
             data_directory,
             log_path: log_directory.join("codex-taskboard-launcher.log"),
-        }
-    }
-}
-
-fn acquire_instance_lock(path: &Path) -> Result<Option<File>, std::io::Error> {
-    let file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .open(path)?;
-    let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
-    if result == 0 {
-        Ok(Some(file))
-    } else {
-        let error = std::io::Error::last_os_error();
-        if error.kind() == std::io::ErrorKind::WouldBlock {
-            Ok(None)
-        } else {
-            Err(error)
         }
     }
 }
@@ -732,6 +706,7 @@ async fn offer_update(
 
 fn main() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|_, _, _| {}))
         .enable_macos_default_menu(false)
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -752,18 +727,8 @@ fn main() {
             let log_directory = app_directories.logs;
             fs::create_dir_all(&data_directory)?;
             fs::create_dir_all(&log_directory)?;
-            let Some(instance_lock) = acquire_instance_lock(&data_directory.join("launcher.lock"))?
-            else {
-                app.handle().exit(0);
-                return Ok(());
-            };
             let version = app.package_info().version.to_string();
-            let state = Arc::new(LauncherState::new(
-                data_directory,
-                log_directory,
-                version,
-                instance_lock,
-            ));
+            let state = Arc::new(LauncherState::new(data_directory, log_directory, version));
             app.manage(state.clone());
 
             let check_update =
@@ -881,9 +846,6 @@ fn main() {
         tauri::RunEvent::Exit => {
             if let Some(state) = app_handle.try_state::<Arc<LauncherState>>() {
                 stop_managed_child(app_handle, &state);
-                unsafe {
-                    libc::flock(state._instance_lock.as_raw_fd(), libc::LOCK_UN);
-                }
             }
         }
         _ => {}
