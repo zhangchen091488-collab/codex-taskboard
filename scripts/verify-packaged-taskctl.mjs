@@ -7,6 +7,8 @@ import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 
+import { waitForTaskboardReadiness } from "./taskboard-supervisor.mjs";
+
 const appPath = process.argv[2] ? path.resolve(process.argv[2]) : null;
 if (!appPath) throw new Error("Usage: verify-packaged-taskctl.mjs <App.app>");
 
@@ -19,6 +21,25 @@ function waitForExit(child, timeoutMs) {
       timeoutMs,
     )),
   ]);
+}
+
+async function waitForPortRelease(port, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    const probe = createServer();
+    const error = await new Promise((resolve) => {
+      probe.once("error", resolve);
+      probe.listen(port, "127.0.0.1", () => resolve(null));
+    });
+    if (!error) {
+      await new Promise((resolve, reject) => probe.close((closeError) => (
+        closeError ? reject(closeError) : resolve()
+      )));
+      return;
+    }
+    if (error.code !== "EADDRINUSE" || Date.now() >= deadline) throw error;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 function runTaskctl(wrapperPath, homeDirectory, args) {
@@ -48,17 +69,6 @@ const runtimeFile = path.join(dataDirectory, "launcher-runtime.json");
 const nodePath = path.join(appPath, "Contents", "MacOS", "node");
 const appRoot = path.join(appPath, "Contents", "Resources", "app");
 const wrapperPath = path.join(appPath, "Contents", "Resources", "bin", "taskctl");
-const reservation = createServer();
-await new Promise((resolve, reject) => {
-  reservation.once("error", reject);
-  reservation.listen(0, "127.0.0.1", resolve);
-});
-const address = reservation.address();
-const inheritedFd = reservation._handle?.fd;
-if (!address || typeof address === "string" || !Number.isInteger(inheritedFd)) {
-  throw new Error("Could not reserve the packaged Taskboard listener");
-}
-
 const instanceToken = randomUUID();
 const instanceSecret = randomBytes(32).toString("hex");
 const server = spawn(nodePath, [path.join(appRoot, "server", "index.mjs")], {
@@ -67,43 +77,29 @@ const server = spawn(nodePath, [path.join(appRoot, "server", "index.mjs")], {
     ...process.env,
     CODEX_TASKBOARD_DATA_DIR: dataDirectory,
     CODEX_TASKBOARD_HOST: "127.0.0.1",
-    CODEX_TASKBOARD_PORT: String(address.port),
-    CODEX_TASKBOARD_LISTEN_FD: "5",
+    CODEX_TASKBOARD_PORT: "0",
     CODEX_TASKBOARD_INSTANCE_TOKEN: instanceToken,
     CODEX_TASKBOARD_INSTANCE_SECRET: instanceSecret,
     CODEX_TASKBOARD_VERSION: "preflight",
   },
-  stdio: ["ignore", "pipe", "pipe", "ignore", "ignore", inheritedFd],
+  stdio: ["ignore", "pipe", "pipe", "ipc"],
 });
-reservation._handle.readStop();
 
 let stderr = "";
 server.stderr.setEncoding("utf8");
 server.stderr.on("data", (chunk) => { stderr += chunk; });
 try {
-  await new Promise((resolve, reject) => {
-    let stdout = "";
-    const timeout = setTimeout(() => reject(new Error(stderr || "Packaged server did not start")), 15_000);
-    server.stdout.setEncoding("utf8");
-    server.stdout.on("data", (chunk) => {
-      stdout += chunk;
-      if (stdout.includes("Codex Taskboard listening")) {
-        clearTimeout(timeout);
-        resolve();
-      }
+  const readiness = await waitForTaskboardReadiness(server, 15_000)
+    .catch((error) => {
+      throw new Error(stderr || error.message);
     });
-    server.once("exit", () => {
-      clearTimeout(timeout);
-      reject(new Error(stderr || "Packaged server exited during startup"));
-    });
-  });
 
   await writeFile(
     runtimeFile,
     `${JSON.stringify({
       version: 1,
       pid: server.pid,
-      url: `http://127.0.0.1:${address.port}/${instanceToken}`,
+      url: `http://127.0.0.1:${readiness.port}/${instanceToken}`,
     })}\n`,
     { mode: 0o600 },
   );
@@ -142,22 +138,13 @@ try {
 
   server.kill("SIGTERM");
   await waitForExit(server, 10_000);
-  const takeover = createServer();
-  const takeoverError = await new Promise((resolve) => {
-    takeover.once("error", resolve);
-    takeover.listen(address.port, "127.0.0.1", () => resolve(null));
-  });
-  if (!takeoverError || takeoverError.code !== "EADDRINUSE") {
-    takeover.close();
-    throw new Error("The launcher-owned listener was replaceable after server exit");
-  }
+  await waitForPortRelease(readiness.port, 2_000);
 } finally {
   if (server.exitCode === null && server.signalCode === null) {
     server.kill("SIGKILL");
     await waitForExit(server, 2_000).catch(() => {});
   }
-  await new Promise((resolve) => reservation.close(resolve));
   await rm(temporaryHome, { recursive: true, force: true });
 }
 
-console.log("Verified packaged taskctl discovery and launcher-owned listener");
+console.log("Verified packaged taskctl discovery and readiness-assigned listener cleanup");

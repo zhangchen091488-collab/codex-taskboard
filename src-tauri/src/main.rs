@@ -8,7 +8,7 @@ mod readiness;
 use serde::Deserialize;
 use serde::Serialize;
 #[cfg(target_os = "macos")]
-use std::os::{fd::AsRawFd, unix::process::CommandExt};
+use std::os::unix::process::CommandExt;
 use std::{
     fs::{self, OpenOptions},
     io::Write,
@@ -21,7 +21,6 @@ use std::{
 #[cfg(target_os = "macos")]
 use std::{
     io::{BufRead, BufReader},
-    net::TcpListener,
     process::{Command as StdCommand, Stdio},
     sync::mpsc,
     thread,
@@ -39,9 +38,6 @@ use uuid::Uuid;
 
 #[cfg(target_os = "macos")]
 const STOP_TIMEOUT: Duration = Duration::from_secs(5);
-#[cfg(target_os = "macos")]
-const TASKBOARD_LISTEN_FD: i32 = 5;
-
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LauncherSnapshot {
@@ -71,8 +67,6 @@ struct LauncherState {
     update_in_progress: AtomicBool,
     generation: AtomicU64,
     lifecycle: Mutex<()>,
-    #[cfg(target_os = "macos")]
-    taskboard_listener: Mutex<Option<TcpListener>>,
     taskboard_url: Mutex<Option<String>>,
     data_directory: PathBuf,
     log_path: PathBuf,
@@ -98,8 +92,6 @@ impl LauncherState {
             update_in_progress: AtomicBool::new(false),
             generation: AtomicU64::new(0),
             lifecycle: Mutex::new(()),
-            #[cfg(target_os = "macos")]
-            taskboard_listener: Mutex::new(None),
             taskboard_url: Mutex::new(None),
             #[cfg(target_os = "macos")]
             pid_record_path: data_directory.join("launcher-child.json"),
@@ -121,20 +113,6 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<(), std::io::Erro
         }
     }
     Ok(())
-}
-
-#[cfg(target_os = "macos")]
-fn taskboard_listener(state: &LauncherState) -> Result<(i32, u16), String> {
-    let mut listener = state.taskboard_listener.lock().unwrap();
-    if listener.is_none() {
-        *listener = Some(TcpListener::bind(("127.0.0.1", 0)).map_err(|error| error.to_string())?);
-    }
-    let listener = listener.as_ref().unwrap();
-    let port = listener
-        .local_addr()
-        .map_err(|error| error.to_string())?
-        .port();
-    Ok((listener.as_raw_fd(), port))
 }
 
 fn update_snapshot(
@@ -418,7 +396,6 @@ fn start_launcher_locked(
     let inherited_path = std::env::var_os("PATH");
     let path_value = platform::launcher_path(&resource_directory, inherited_path.as_deref())
         .map_err(|error| format!("无法构造任务面板 PATH：{error}"))?;
-    let (taskboard_listener_fd, taskboard_port) = taskboard_listener(state)?;
     let instance_token = Uuid::new_v4().to_string();
     let instance_secret = Uuid::new_v4().to_string();
     let version = state.snapshot.lock().unwrap().version.clone();
@@ -435,9 +412,8 @@ fn start_launcher_locked(
             "CODEX_TASKBOARD_RUNTIME_FILE",
             state.data_directory.join("launcher-runtime.json"),
         )
-        .env("CODEX_TASKBOARD_LISTEN_FD", TASKBOARD_LISTEN_FD.to_string())
         .env("CODEX_TASKBOARD_HOST", "127.0.0.1")
-        .env("CODEX_TASKBOARD_PORT", taskboard_port.to_string())
+        .env("CODEX_TASKBOARD_PORT", "0")
         .env("CODEX_TASKBOARD_INSTANCE_TOKEN", &instance_token)
         .env("CODEX_TASKBOARD_INSTANCE_SECRET", &instance_secret)
         .env("CODEX_TASKBOARD_LAUNCHER_READINESS", "1")
@@ -456,17 +432,6 @@ fn start_launcher_locked(
         .process_group(0)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    unsafe {
-        command.pre_exec(move || {
-            if libc::dup2(taskboard_listener_fd, TASKBOARD_LISTEN_FD) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if libc::fcntl(TASKBOARD_LISTEN_FD, libc::F_SETFD, 0) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
     let mut child = command.spawn().map_err(|error| error.to_string())?;
     let pid = child.id();
     if let Err(error) = write_pid_record(state, pid, node_path, injector_path) {

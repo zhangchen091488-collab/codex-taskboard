@@ -35,14 +35,11 @@ class ManagedChild extends EventEmitter {
 }
 
 test("Taskboard child stdio reserves a dedicated IPC channel", () => {
-  assert.deepEqual(taskboardChildStdio({ detached: false, listenFd: null }), [
+  assert.deepEqual(taskboardChildStdio({ detached: false }), [
     "inherit", "inherit", "inherit", "ipc",
   ]);
-  assert.deepEqual(taskboardChildStdio({ detached: true, listenFd: null }), [
+  assert.deepEqual(taskboardChildStdio({ detached: true }), [
     "ignore", "ignore", "ignore", "ipc",
-  ]);
-  assert.deepEqual(taskboardChildStdio({ detached: false, listenFd: 5 }), [
-    "inherit", "inherit", "inherit", "ignore", "ignore", "inherit", "ipc",
   ]);
 });
 

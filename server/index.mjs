@@ -28,10 +28,7 @@ export function resolveStartupListenOptions(environment = process.env) {
   }
   const rawPort = environment.CODEX_TASKBOARD_PORT ?? (launcherMode ? "0" : "47823");
   const port = launcherMode ? resolveLauncherPort(rawPort) : resolvePort(rawPort);
-  const fd = environment.CODEX_TASKBOARD_LISTEN_FD === undefined
-    ? null
-    : Number(environment.CODEX_TASKBOARD_LISTEN_FD);
-  return { host, port, fd };
+  return { host, port };
 }
 
 async function sendReadiness(message) {

@@ -8,7 +8,10 @@ import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { test } from "node:test";
 
-import { waitForTaskboardReadiness } from "../scripts/taskboard-supervisor.mjs";
+import {
+  createTaskboardSupervisor,
+  waitForTaskboardReadiness,
+} from "../scripts/taskboard-supervisor.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const serverPath = path.join(projectRoot, "server", "index.mjs");
@@ -134,6 +137,70 @@ test("server sends a generic error readiness message when listening fails", asyn
     if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     await waitForExit(child);
     await new Promise((resolve, reject) => blocker.close((error) => error ? reject(error) : resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("concurrent launcher servers receive unique OS-assigned loopback ports", async () => {
+  const directories = await Promise.all(Array.from(
+    { length: 8 },
+    () => mkdtemp(path.join(os.tmpdir(), "taskboard-readiness-stress-")),
+  ));
+  const children = directories.map((directory) => startServer(directory, 0));
+  for (const child of children) {
+    capture(child.stdout);
+    capture(child.stderr);
+  }
+  try {
+    const readinessMessages = await Promise.all(
+      children.map((child) => waitForTaskboardReadiness(child, 10_000)),
+    );
+    const ports = readinessMessages.map((message) => message.port);
+    assert.equal(new Set(ports).size, children.length);
+    assert.ok(readinessMessages.every((message) => (
+      message.host === "127.0.0.1" && message.port > 0
+    )));
+    await Promise.all(ports.map(connectToLoopback));
+  } finally {
+    for (const child of children) {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    }
+    await Promise.all(children.map((child) => waitForExit(child)));
+    await Promise.all(directories.map((directory) => (
+      rm(directory, { recursive: true, force: true })
+    )));
+  }
+});
+
+test("supervisor applies the random port before its health gate", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-readiness-supervisor-"));
+  let currentPort = 0;
+  let child;
+  const supervisor = createTaskboardSupervisor({
+    detached: false,
+    isReachable: async () => false,
+    onReadiness: (readiness) => {
+      currentPort = readiness.port;
+    },
+    waitUntilReachable: async () => {
+      assert.ok(currentPort > 0);
+      await connectToLoopback(currentPort);
+    },
+    start: () => {
+      child = startServer(directory, 0);
+      capture(child.stdout);
+      capture(child.stderr);
+      return child;
+    },
+  });
+  try {
+    const result = await supervisor.ensure({ force: true });
+    assert.equal(result.status, "ok");
+    assert.equal(result.restarted, true);
+    assert.equal(result.readiness.port, currentPort);
+  } finally {
+    await supervisor.stop();
+    if (child) await waitForExit(child);
     await rm(directory, { recursive: true, force: true });
   }
 });

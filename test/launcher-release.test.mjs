@@ -36,7 +36,7 @@ test("the launcher keeps OS-specific app setup behind one platform boundary", ()
   assert.doesNotMatch(launcherSource, /ActivationPolicy/);
   assert.match(
     launcherSource,
-    /#\[cfg\(target_os = "macos"\)\]\nuse std::os::\{fd::AsRawFd, unix::process::CommandExt\};/,
+    /#\[cfg\(target_os = "macos"\)\]\nuse std::os::unix::process::CommandExt;/,
   );
   assert.match(platformSource, /#\[cfg\(target_os = "macos"\)\]/);
   assert.match(platformSource, /#\[cfg\(target_os = "windows"\)\]/);
@@ -81,8 +81,10 @@ test("the macOS launcher uses one instance, serialized lifecycle changes, and a 
   assert.doesNotMatch(launcherSource, /_instance_lock/);
   assert.match(launcherSource, /lifecycle: Mutex/);
   assert.match(launcherSource, /generation: AtomicU64/);
-  assert.match(launcherSource, /TcpListener::bind\(\("127\.0\.0\.1", 0\)\)/);
-  assert.equal(launcherSource.match(/TcpListener::bind/g)?.length, 1);
+  assert.match(launcherSource, /CODEX_TASKBOARD_PORT", "0"/);
+  assert.doesNotMatch(launcherSource, /TcpListener::bind/);
+  assert.doesNotMatch(launcherSource, /CODEX_TASKBOARD_LISTEN_FD/);
+  assert.doesNotMatch(launcherSource, /\b(?:dup2|fcntl|pre_exec)\b/);
   assert.match(launcherSource, /"--cdp-pipe"/);
   assert.doesNotMatch(launcherSource, /cdp_port/);
   assert.doesNotMatch(launcherSource, /const LAUNCHER_PORT/);

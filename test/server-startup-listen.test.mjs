@@ -37,14 +37,12 @@ test("startup options reserve port zero for loopback launcher mode", () => {
   assert.deepEqual(resolveStartupListenOptions({}), {
     host: "0.0.0.0",
     port: 47823,
-    fd: null,
   });
   assert.deepEqual(resolveStartupListenOptions({
     CODEX_TASKBOARD_INSTANCE_TOKEN: "00000000-0000-4000-8000-000000000001",
   }), {
     host: "127.0.0.1",
     port: 0,
-    fd: null,
   });
   assert.throws(
     () => resolveStartupListenOptions({ CODEX_TASKBOARD_PORT: "0" }),

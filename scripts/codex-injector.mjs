@@ -50,16 +50,6 @@ const taskboardDataDirectory = process.env.CODEX_TASKBOARD_DATA_DIR
 const taskboardRuntimeFile = process.env.CODEX_TASKBOARD_RUNTIME_FILE
   ? path.resolve(process.env.CODEX_TASKBOARD_RUNTIME_FILE)
   : null;
-const taskboardListenFd = process.env.CODEX_TASKBOARD_LISTEN_FD === undefined
-  ? null
-  : Number(process.env.CODEX_TASKBOARD_LISTEN_FD);
-if (taskboardListenFd !== null && (
-  !Number.isInteger(taskboardListenFd)
-  || taskboardListenFd < 3
-  || taskboardListenFd > 255
-)) {
-  throw new Error("CODEX_TASKBOARD_LISTEN_FD must be an inherited file descriptor");
-}
 const automationPoliciesPath = path.join(
   taskboardDataDirectory,
   "codex-automation-policies.json",
@@ -225,7 +215,7 @@ function startTaskboard({ detached }) {
   return spawn(process.execPath, [path.join(projectRoot, "server", "index.mjs")], {
     cwd: projectRoot,
     detached,
-    stdio: taskboardChildStdio({ detached, listenFd: taskboardListenFd }),
+    stdio: taskboardChildStdio({ detached }),
   });
 }
 

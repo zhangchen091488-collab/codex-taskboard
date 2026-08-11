@@ -4,14 +4,9 @@ function isRunning(child) {
   return Boolean(child && child.exitCode === null && child.signalCode === null);
 }
 
-export function taskboardChildStdio({ detached, listenFd }) {
+export function taskboardChildStdio({ detached }) {
   const standardIo = detached ? "ignore" : "inherit";
-  if (listenFd === null) return [standardIo, standardIo, standardIo, "ipc"];
-  return Array.from({ length: listenFd + 2 }, (_, fd) => {
-    if (fd === listenFd) return "inherit";
-    if (fd === listenFd + 1) return "ipc";
-    return fd < 3 ? standardIo : "ignore";
-  });
+  return [standardIo, standardIo, standardIo, "ipc"];
 }
 
 export function waitForTaskboardReadiness(child, timeoutMs) {

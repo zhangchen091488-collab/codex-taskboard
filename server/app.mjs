@@ -2575,12 +2575,9 @@ export function createTaskboardServer(options = {}) {
     aiChat,
     server,
     options: resolved,
-    async listen({ host = "127.0.0.1", port = resolvePort(), fd = null } = {}) {
+    async listen({ host = "127.0.0.1", port = resolvePort() } = {}) {
       if (host !== "127.0.0.1" && host !== "0.0.0.0") {
         throw new Error("Taskboard server must bind to 127.0.0.1 or 0.0.0.0");
-      }
-      if (fd !== null && (!Number.isInteger(fd) || fd < 3 || fd > 255)) {
-        throw new Error("Taskboard server listen fd must be an inherited file descriptor");
       }
       await new Promise((resolve, reject) => {
         const onError = (error) => {
@@ -2593,8 +2590,7 @@ export function createTaskboardServer(options = {}) {
         };
         server.once("error", onError);
         server.once("listening", onListening);
-        if (fd === null) server.listen(port, host);
-        else server.listen({ fd });
+        server.listen(port, host);
       });
       listening = true;
       return server.address();
