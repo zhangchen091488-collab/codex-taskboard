@@ -320,10 +320,9 @@ fn start_launcher_locked(
         snapshot.app_path = Some(codex_app.display().to_string());
     });
 
-    let path_value = format!(
-        "{}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-        resource_directory.join("bin").display()
-    );
+    let inherited_path = std::env::var_os("PATH");
+    let path_value = platform::launcher_path(&resource_directory, inherited_path.as_deref())
+        .map_err(|error| format!("无法构造任务面板 PATH：{error}"))?;
     let (taskboard_listener_fd, taskboard_port) = taskboard_listener(state)?;
     let instance_token = Uuid::new_v4().to_string();
     let instance_secret = Uuid::new_v4().to_string();

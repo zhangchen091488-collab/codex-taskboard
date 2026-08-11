@@ -45,6 +45,15 @@ test("the launcher uses standard app directories without abandoning existing mac
   assert.doesNotMatch(macosProductionSource, /remove_dir_all/);
 });
 
+test("the launcher builds PATH with platform separators and keeps the inherited entries", () => {
+  assert.match(launcherSource, /platform::launcher_path/);
+  assert.match(platformSource, /split_paths/);
+  assert.match(platformSource, /join_paths/);
+  assert.match(platformSource, /resource_directory\.join\("bin"\)/);
+  assert.doesNotMatch(launcherSource, /\/opt\/homebrew\/bin/);
+  assert.doesNotMatch(launcherSource, /\/usr\/local\/bin:/);
+});
+
 test("the macOS launcher uses one instance, serialized lifecycle changes, and a private CDP pipe", () => {
   const singleInstancePlugin = launcherSource.indexOf("tauri_plugin_single_instance::init");
   const dialogPlugin = launcherSource.indexOf("tauri_plugin_dialog::init");
