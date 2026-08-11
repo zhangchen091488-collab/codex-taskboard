@@ -43,7 +43,7 @@ jobs:
         with:
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - run: npm ci
-      - run: npm run app:prepare -- --target universal-apple-darwin
+      - run: npm run app:prepare:macos
       - name: Build the unsigned universal app bundle
         run: >-
           npm run tauri -- build
@@ -77,12 +77,10 @@ jobs:
         with:
           toolchain: 1.88.0
       - run: npm ci
-      - name: Build application resources
-        run: npm run build:web
       - name: Prepare and verify the Windows Node sidecar
         shell: pwsh
         run: |
-          node scripts/prepare-tauri-app.mjs --target x86_64-pc-windows-msvc
+          npm run app:prepare:windows
           $version = & .\src-tauri\binaries\node-x86_64-pc-windows-msvc.exe --version
           if ($version -ne "v22.23.2") {
             throw "Unexpected Windows Node sidecar version: $version"

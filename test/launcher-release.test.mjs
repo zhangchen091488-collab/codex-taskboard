@@ -95,7 +95,7 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
   assert.match(checkWorkflow, /--no-sign/);
   assert.match(checkWorkflow, /runs-on: windows-latest/);
   assert.match(checkWorkflow, /cargo check --locked --manifest-path src-tauri\/Cargo\.toml --target x86_64-pc-windows-msvc/);
-  assert.match(checkWorkflow, /prepare-tauri-app\.mjs --target x86_64-pc-windows-msvc/);
+  assert.match(checkWorkflow, /npm run app:prepare:windows/);
   assert.match(checkWorkflow, /node-x86_64-pc-windows-msvc\.exe --version/);
   assert.match(checkWorkflow, /Unexpected Windows Node sidecar version/);
   assert.match(checkWorkflow, /windows-taskctl-wrapper\.ps1 -ProjectRoot/);

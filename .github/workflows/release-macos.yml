@@ -129,7 +129,7 @@ jobs:
         run: npm ci
 
       - name: Prepare universal app resources
-        run: npm run app:prepare -- --target universal-apple-darwin
+        run: npm run app:prepare:macos
 
       - name: Import Developer ID certificate
         env:
