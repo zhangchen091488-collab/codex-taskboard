@@ -1,6 +1,6 @@
 # Codex Taskboard
 
-Codex Taskboard 是一个本地优先的任务面板。它可在浏览器中运行，也可通过 macOS App 注入官方 Codex/ChatGPT 客户端。React 界面、`taskctl` CLI 和内置 Codex Skill 使用同一套 HTTP API。
+Codex Taskboard 是一个本地优先的任务面板。它可在浏览器中运行，也可通过桌面 App 注入官方 Codex/ChatGPT 客户端。React 界面、`taskctl` CLI 和内置 Codex Skill 使用同一套 HTTP API。macOS App 已有正式发布流程；Windows 11 x64 适配正在实机验收，尚未发布正式 Windows 安装包。
 
 ## macOS App
 
@@ -26,7 +26,7 @@ App 不修改官方客户端的 `app.asar`。App 自带 Node.js、服务、Web �
   - `/Applications/Codex.app`
   - `~/Applications/Codex.app`
 
-当前不提供 Windows 或 Linux App。
+Windows 11 x64 的实现状态、安装候选包验证、数据路径和诊断命令见 [Windows 安装与故障处理](docs/windows-installation.md)。在 Windows 验收矩阵和受保护发布流程完成前，不要把 unsigned CI 构建或 Draft 资产当作正式安装包。当前不提供 Linux App。
 
 ### 下载和安装
 
@@ -64,13 +64,20 @@ Tauri Updater 先用 App 内置公钥验证 `.app.tar.gz` 的签名，再安装�
 
 Draft Release 不会成为 GitHub 的 latest Release。审核人批准受保护的 promotion job 后，工作流会重新下载并验证 Draft 资产，再发布和锁定 Release。只有 promotion 成功后，已安装 App 才会看到该版本。
 
+## Windows 11 x64
+
+Windows App 使用 current-user NSIS 安装器、内置 Node.js 22.23.2、系统 Evergreen WebView2 和独立 Codex profile。它不会修改官方 Codex 安装；启动器优先从官方 Windows 包元数据发现 `ChatGPT.exe`，失败时允许用户手动选择并保存该位置。
+
+Windows 正式安装包尚未发布。开发/验收人员应从受控来源取得候选 setup，先验证 Authenticode 签名和时间戳，再按 [Windows 安装与故障处理](docs/windows-installation.md) 与 [Windows VM 验收矩阵](docs/windows-vm-validation.md) 操作。Windows 数据在 `%APPDATA%\com.chuspeeism.codex-taskboard`，日志在 `%LOCALAPPDATA%\com.chuspeeism.codex-taskboard\logs`；安装、更新或卸载验证不得删除该数据目录。
+
 ## 本地开发
 
 ### 要求
 
 - Node.js 22.5 或更高版本
 - Rust 1.88
-- Xcode 和 Xcode Command Line Tools
+- macOS 构建需要 Xcode 和 Xcode Command Line Tools。
+- Windows 构建需要 Windows 11 x64、MSVC Rust target 和 Visual Studio Build Tools C++ 工具链。
 
 安装依赖并启动浏览器开发环境：
 
@@ -108,7 +115,7 @@ npm start
 
 ## 发布 macOS App
 
-`.github/workflows/check.yml` 在 PR 中使用 macOS runner 准备内置 Node，并构建真实的 unsigned universal App bundle。`.github/workflows/release-macos.yml` 只接受 `v*` 标签推送。构建 job 验证标签提交属于 `main`，并确认 `package.json`、`Cargo.toml` 和 `tauri.conf.json` 的版本一致，然后使用 Node.js 22、Rust 1.88 和两个 macOS Rust target 构建 universal 包并创建 GitHub Draft Release。它同时保存 4 个上传资产的可信 SHA-256 manifest。独立的 `macos-release` promotion job 从 Draft 重新下载全部资产，对比 manifest，并重新执行签名、公证、Team ID、Updater 公钥、`latest.json` 和 App/DMG/updater 内容一致性验证。验证通过后，该 job 发布 Release，并确认 Release 已不可变且最终资产摘要未变化。所有第三方 Action 都锁定到完整提交 SHA。
+`.github/workflows/check.yml` 在 PR 中使用 macOS runner 准备内置 Node，并构建真实的 unsigned universal App bundle。`.github/workflows/release-macos.yml` 只接受 `v*` 标签推送。构建 job 验证标签提交属于 `main`，并确认 `package.json`、`Cargo.toml` 和 `tauri.conf.json` 的版本一致，然后使用 Node.js 22、Rust 1.88 和两个 macOS Rust target 构建 universal 包并创建 GitHub Draft Release。它同时保存 5 个上传资产的可信 SHA-256 manifest。独立的 `macos-release` promotion job 从 Draft 重新下载全部资产，对比 manifest，并重新执行签名、公证、Team ID、Updater 公钥、`latest.json` 和 App/DMG/updater 内容一致性验证。验证通过后，该 job 发布 Release，并确认 Release 已不可变且最终资产摘要未变化。所有第三方 Action 都锁定到完整提交 SHA。
 
 内置 Node 版本固定为 `22.23.2`。arm64 与 x64 安装包的 SHA-256 已写入 `scripts/prepare-tauri-app.mjs`，构建不会信任与安装包同源、临时下载的校验清单。
 
@@ -159,7 +166,7 @@ npm start
 ### Draft Release 检查清单
 
 - 工作流完成签名、公证和 stapling，没有跳过步骤。
-- Draft 包含 universal `.dmg`、`.app.tar.gz`、对应 `.sig` 和 `latest.json`。
+- Draft 包含 universal `.dmg`、`.app.tar.gz`、对应 `.sig`、`darwin-updater.json` 和 `latest.json`。
 - `latest.json` 的版本与标签一致，并包含 `darwin-aarch64` 和 `darwin-x86_64`；两者都指向本次 universal `.app.tar.gz`。
 - 在 Intel Mac 和 Apple Silicon Mac 上都能安装 DMG。
 - `codesign --verify --deep --strict`、`spctl --assess` 和 `xcrun stapler validate` 均通过。
@@ -188,6 +195,8 @@ npm run taskctl -- issue create \
 ```
 
 如需在 shell 中直接使用 `taskctl`，可运行 `npm link`。`CODEX_TASKBOARD_URL` 可让 CLI 连接另一台本地或局域网服务。云端部署通过本地 companion 和 `taskctl cloud login` 配置。
+
+Windows 安装包内提供 `bin\taskctl.cmd`，它只使用安装包自带的 Node，并从 `%APPDATA%\com.chuspeeism.codex-taskboard\launcher-runtime.json` 发现当前本地服务。查找安装目录和调用方式见 [Windows 安装与故障处理](docs/windows-installation.md#使用-taskctl)。
 
 ## 安装 Codex Skill
 
