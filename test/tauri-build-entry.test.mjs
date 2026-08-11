@@ -58,7 +58,7 @@ test("macOS build plan uses explicit prepare, bundles, and process environment",
   });
 });
 
-test("Windows build plan selects the Windows prepare entry without macOS bundles", () => {
+test("Windows build plan creates an unsigned NSIS without requiring updater keys", () => {
   const plan = createTauriBuildPlan([], {
     ...planOptions,
     hostPlatform: "win32",
@@ -74,7 +74,11 @@ test("Windows build plan selects the Windows prepare entry without macOS bundles
     "build",
     "--target",
     "x86_64-pc-windows-msvc",
+    "--bundles",
+    "nsis",
     "--no-sign",
+    "--config",
+    '{"bundle":{"createUpdaterArtifacts":false}}',
   ]);
   assert.deepEqual(plan.steps[1].environment, { CI: "true" });
 });

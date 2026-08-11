@@ -1,7 +1,7 @@
 [package]
 name = "codex-taskboard-launcher"
 version = "0.2.2"
-description = "Codex Taskboard macOS launcher"
+description = "Codex Taskboard desktop launcher"
 edition = "2021"
 rust-version = "1.88"
 

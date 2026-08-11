@@ -59,7 +59,13 @@ export function createTauriBuildPlan(
   if (request.platform === "darwin") {
     tauriArguments.push("--bundles", "app,dmg");
   } else if (request.platform === "win32") {
-    tauriArguments.push("--no-sign");
+    tauriArguments.push(
+      "--bundles",
+      "nsis",
+      "--no-sign",
+      "--config",
+      JSON.stringify({ bundle: { createUpdaterArtifacts: false } }),
+    );
   }
   return {
     dryRun,
