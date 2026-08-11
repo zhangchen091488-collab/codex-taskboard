@@ -134,9 +134,9 @@ function sanitizeModels(value) {
   });
 }
 
-function listSkills(codexExecutable, workspacePath, processEnv) {
+function listSkills(codexExecutable, codexArgsPrefix, workspacePath, processEnv) {
   return new Promise((resolve, reject) => {
-    const child = spawn(codexExecutable, ["app-server", "--stdio"], {
+    const child = spawn(codexExecutable, [...codexArgsPrefix, "app-server", "--stdio"], {
       cwd: workspacePath,
       env: processEnv,
       stdio: ["pipe", "pipe", "ignore"],
@@ -250,19 +250,20 @@ function sanitizeSkills(entries) {
 
 export async function discoverAiCatalog({
   codexExecutable,
+  codexArgsPrefix = [],
   workspacePath,
   processEnv,
 }) {
   const environment = withoutTaskboardLauncherEnvironment(processEnv);
   const [modelResult, skillEntries] = await Promise.all([
-    execFileAsync(codexExecutable, ["debug", "models"], {
+    execFileAsync(codexExecutable, [...codexArgsPrefix, "debug", "models"], {
       cwd: workspacePath,
       env: environment,
       encoding: "utf8",
       timeout: CATALOG_TIMEOUT_MS,
       maxBuffer: CATALOG_MAX_BUFFER,
     }),
-    listSkills(codexExecutable, workspacePath, environment),
+    listSkills(codexExecutable, codexArgsPrefix, workspacePath, environment),
   ]);
   const modelCatalog = JSON.parse(modelResult.stdout);
   return {

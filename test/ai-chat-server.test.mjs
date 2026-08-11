@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { request as httpRequest } from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -13,8 +13,7 @@ async function createServerFixture(host = "127.0.0.1") {
   await mkdir(workspacePath);
   const workspace = await realpath(workspacePath);
   const codexExecutable = path.join(directory, "fake-codex.mjs");
-  await writeFile(codexExecutable, `#!/usr/bin/env node
-const args = process.argv.slice(2);
+  await writeFile(codexExecutable, `const args = process.argv.slice(2);
 if (args[0] === "debug") {
   process.stdout.write('{"models":[{"slug":"gpt-real","display_name":"GPT Real","description":"","default_reasoning_level":"low","supported_reasoning_levels":[{"effort":"low"},{"effort":"high"}],"service_tiers":[]}]}');
 } else if (args[0] === "app-server") {
@@ -35,14 +34,14 @@ if (args[0] === "debug") {
   });
 }
 `);
-  await chmod(codexExecutable, 0o755);
   const codexStatePath = path.join(directory, "codex-state.json");
   await writeFile(codexStatePath, JSON.stringify({
     "local-projects": { local: { rootPaths: [workspace] } },
   }));
   const app = createTaskboardServer({
     dataDirectory: directory,
-    codexExecutable,
+    codexExecutable: process.execPath,
+    codexArgsPrefix: [codexExecutable],
     codexStatePath,
     skillPath: "/fixture/manage-taskboard/SKILL.md",
   });
@@ -187,7 +186,11 @@ test("non-local AI turns reject a workspace that became unavailable", async () =
   const fixture = await createServerFixture();
   try {
     const workspaceLink = path.join(fixture.directory, "project-workspace");
-    await symlink(path.resolve(import.meta.dirname, ".."), workspaceLink, "dir");
+    await symlink(
+      path.resolve(import.meta.dirname, ".."),
+      workspaceLink,
+      process.platform === "win32" ? "junction" : "dir",
+    );
     const project = await request(fixture.baseUrl, "/api/projects", {
       method: "POST",
       body: {

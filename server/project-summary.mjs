@@ -49,6 +49,7 @@ export class ProjectSummaryService {
   constructor(options) {
     this.database = options.database;
     this.codexExecutable = options.codexExecutable;
+    this.codexArgsPrefix = [...(options.codexArgsPrefix ?? [])];
     this.workspacePath = options.workspacePath;
     this.processEnv = options.processEnv ?? process.env;
     this.spawnTurn = options.spawnTurn ?? spawnCodexTurn;
@@ -103,6 +104,7 @@ export class ProjectSummaryService {
       const { child, completion } = this.spawnTurn({
         executable: this.codexExecutable,
         args: [
+          ...this.codexArgsPrefix,
           "exec",
           "--ephemeral",
           "--json",

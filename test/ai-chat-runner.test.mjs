@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -47,8 +47,7 @@ async function createFixture() {
   const descendantPath = path.join(directory, "descendant-alive");
   const stubbornReadyPath = path.join(directory, "stubborn-ready.json");
   const executable = path.join(directory, "fake-codex.mjs");
-  await writeFile(executable, `#!/usr/bin/env node
-import { appendFileSync, writeFileSync } from "node:fs";
+  await writeFile(executable, `import { appendFileSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 const args = process.argv.slice(2);
 if (process.env.FAKE_ENVIRONMENT_CAPTURE_PATH) {
@@ -146,8 +145,6 @@ if (args[0] === "app-server") {
   });
 }
 `);
-  await chmod(executable, 0o755);
-
   const codexStatePath = path.join(directory, "codex-state.json");
   await writeFile(codexStatePath, JSON.stringify({
     "local-projects": {
@@ -161,7 +158,8 @@ if (args[0] === "app-server") {
   database.createProject({ id: "other", name: "Other", workspacePath: null });
   const service = new AiChatService({
     database,
-    codexExecutable: executable,
+    codexExecutable: process.execPath,
+    codexArgsPrefix: [executable],
     codexStatePath,
     manageTaskboardSkillPath: "/fixture/manage-taskboard/SKILL.md",
     processEnv: {
@@ -457,7 +455,8 @@ test("startup marks abandoned runs interrupted while preserving the Codex thread
   fixture.database = new TaskboardDatabase(fixture.databasePath);
   const restarted = new AiChatService({
     database: fixture.database,
-    codexExecutable: path.join(fixture.directory, "fake-codex.mjs"),
+    codexExecutable: process.execPath,
+    codexArgsPrefix: [path.join(fixture.directory, "fake-codex.mjs")],
     codexStatePath: path.join(fixture.directory, "codex-state.json"),
     manageTaskboardSkillPath: "/fixture/manage-taskboard/SKILL.md",
   });

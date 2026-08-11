@@ -1135,9 +1135,9 @@ async function scanDevelopmentContexts(workspacePath, processEnv = process.env) 
   }
 }
 
-async function discoverSkills(codexExecutable, workspacePath, processEnv) {
+async function discoverSkills(codexExecutable, codexArgsPrefix, workspacePath, processEnv) {
   const entries = await new Promise((resolve, reject) => {
-    const child = spawn(codexExecutable, ["app-server", "--stdio"], {
+    const child = spawn(codexExecutable, [...codexArgsPrefix, "app-server", "--stdio"], {
       cwd: workspacePath,
       env: processEnv,
       stdio: ["pipe", "pipe", "ignore"],
@@ -1250,12 +1250,16 @@ async function discoverSkills(codexExecutable, workspacePath, processEnv) {
   return [...unique.values()].sort((left, right) => left.label.localeCompare(right.label));
 }
 
-async function discoverMcpServers(codexExecutable, processEnv) {
-  const result = await execFileAsync(codexExecutable, ["mcp", "list", "--json"], {
-    env: processEnv,
-    timeout: 8_000,
-    maxBuffer: 2 * 1024 * 1024,
-  });
+async function discoverMcpServers(codexExecutable, codexArgsPrefix, processEnv) {
+  const result = await execFileAsync(
+    codexExecutable,
+    [...codexArgsPrefix, "mcp", "list", "--json"],
+    {
+      env: processEnv,
+      timeout: 8_000,
+      maxBuffer: 2 * 1024 * 1024,
+    },
+  );
   const entries = JSON.parse(result.stdout);
   if (!Array.isArray(entries)) throw new Error("Codex returned an invalid MCP server list");
   return entries
@@ -1278,8 +1282,8 @@ async function discoverMcpServers(codexExecutable, processEnv) {
 
 async function discoverWorkflowCapabilities(resolved, workspacePath, processEnv) {
   const [skills, mcpServers] = await Promise.all([
-    discoverSkills(resolved.codexExecutable, workspacePath, processEnv),
-    discoverMcpServers(resolved.codexExecutable, processEnv),
+    discoverSkills(resolved.codexExecutable, resolved.codexArgsPrefix, workspacePath, processEnv),
+    discoverMcpServers(resolved.codexExecutable, resolved.codexArgsPrefix, processEnv),
   ]);
   return { skills, mcpServers };
 }
@@ -1302,6 +1306,13 @@ export function resolveServerOptions(options = {}) {
   if (instanceToken && !/^[a-f0-9-]{32,128}$/i.test(instanceSecret)) {
     throw new Error("CODEX_TASKBOARD_INSTANCE_SECRET must be set in launcher mode");
   }
+  const codexArgsPrefix = options.codexArgsPrefix ?? [];
+  if (
+    !Array.isArray(codexArgsPrefix)
+    || codexArgsPrefix.some((argument) => typeof argument !== "string")
+  ) {
+    throw new TypeError("codexArgsPrefix must be an array of strings");
+  }
   return {
     dataDirectory,
     databasePath: options.databasePath ?? path.join(dataDirectory, "taskboard.sqlite"),
@@ -1311,6 +1322,7 @@ export function resolveServerOptions(options = {}) {
     staticDirectory: options.staticDirectory ?? path.join(PROJECT_ROOT, "dist", "web"),
     skillPath: options.skillPath ?? path.join(PROJECT_ROOT, "skills", "manage-taskboard", "SKILL.md"),
     codexExecutable: resolveCodexExecutable({ explicit: options.codexExecutable }),
+    codexArgsPrefix: [...codexArgsPrefix],
     codexStatePath: options.codexStatePath
       ?? path.join(codexHome, ".codex-global-state.json"),
     codexProcessesPath: options.codexProcessesPath
@@ -1513,6 +1525,7 @@ export function createTaskboardServer(options = {}) {
   const aiChat = new AiChatService({
     database,
     codexExecutable: resolved.codexExecutable,
+    codexArgsPrefix: resolved.codexArgsPrefix,
     codexStatePath: resolved.codexStatePath,
     manageTaskboardSkillPath: resolved.skillPath,
     processEnv: codexProcessEnvironment,
@@ -1521,6 +1534,7 @@ export function createTaskboardServer(options = {}) {
   const projectSummary = new ProjectSummaryService({
     database,
     codexExecutable: resolved.codexExecutable,
+    codexArgsPrefix: resolved.codexArgsPrefix,
     processEnv: codexProcessEnvironment,
     workspacePath: PROJECT_ROOT,
   });

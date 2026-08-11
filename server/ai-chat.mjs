@@ -37,6 +37,7 @@ export class AiChatService {
   constructor(options) {
     this.database = options.database;
     this.codexExecutable = options.codexExecutable;
+    this.codexArgsPrefix = [...(options.codexArgsPrefix ?? [])];
     this.codexStatePath = options.codexStatePath;
     this.manageTaskboardSkillPath = options.manageTaskboardSkillPath;
     this.processEnv = options.processEnv ?? process.env;
@@ -110,6 +111,7 @@ export class AiChatService {
   async #catalogForWorkspace(workspacePath) {
     return discoverAiCatalog({
       codexExecutable: this.codexExecutable,
+      codexArgsPrefix: this.codexArgsPrefix,
       workspacePath,
       processEnv: this.processEnv,
     });
@@ -289,7 +291,7 @@ export class AiChatService {
       let terminalError = "";
       const { child, completion } = spawnCodexTurn({
         executable: this.codexExecutable,
-        args,
+        args: [...this.codexArgsPrefix, ...args],
         prompt,
         env: this.processEnv,
         onRawEvent: (raw) => {
