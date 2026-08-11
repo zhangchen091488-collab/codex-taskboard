@@ -53,6 +53,7 @@ pub use macos::{
 pub use windows::{
     app_directories, codex_launch_description, configure_app, discover_codex_installation,
     WindowsLaunchDescription, WindowsProcessTree as NativeProcessTree, WindowsProcessWaiter,
+    WindowsTaskboardRuntime,
 };
 
 #[cfg(test)]

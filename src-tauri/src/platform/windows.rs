@@ -59,12 +59,22 @@ pub struct WindowsProcessTree {
     root_process: Option<OwnedHandle>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct WindowsLaunchDescription {
     pub executable_path: PathBuf,
     pub arguments: Vec<OsString>,
     pub current_directory: PathBuf,
     pub environment: Vec<(OsString, OsString)>,
+}
+
+pub struct WindowsTaskboardRuntime {
+    pub data_directory: PathBuf,
+    pub runtime_file: PathBuf,
+    pub instance_token: String,
+    pub instance_secret: String,
+    pub version: String,
+    pub launcher_path: OsString,
+    pub transport_readiness_path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -125,33 +135,80 @@ fn sanitized_launch_environment(
         .collect()
 }
 
+fn set_launch_environment(
+    environment: &mut Vec<(OsString, OsString)>,
+    name: impl Into<OsString>,
+    value: impl Into<OsString>,
+) {
+    let name = name.into();
+    let normalized_name = name.to_string_lossy().to_ascii_uppercase();
+    environment.retain(|(candidate, _)| {
+        candidate.to_string_lossy().to_ascii_uppercase() != normalized_name
+    });
+    environment.push((name, value.into()));
+}
+
 pub fn codex_launch_description(
     node_path: PathBuf,
     injector_path: PathBuf,
     app_root: PathBuf,
     codex_executable_path: PathBuf,
     profiles: &CodexProfileDirectories,
-    readiness_path: PathBuf,
-    startup_nonce: &str,
+    runtime: WindowsTaskboardRuntime,
 ) -> WindowsLaunchDescription {
+    let mut environment = sanitized_launch_environment(env::vars_os());
+    for (name, value) in [
+        (
+            "CODEX_TASKBOARD_DATA_DIR",
+            runtime.data_directory.into_os_string(),
+        ),
+        (
+            "CODEX_TASKBOARD_RUNTIME_FILE",
+            runtime.runtime_file.into_os_string(),
+        ),
+        ("CODEX_TASKBOARD_HOST", "127.0.0.1".into()),
+        ("CODEX_TASKBOARD_PORT", "0".into()),
+        (
+            "CODEX_TASKBOARD_INSTANCE_TOKEN",
+            runtime.instance_token.clone().into(),
+        ),
+        (
+            "CODEX_TASKBOARD_INSTANCE_SECRET",
+            runtime.instance_secret.into(),
+        ),
+        ("CODEX_TASKBOARD_VERSION", runtime.version.into()),
+        (
+            "CODEX_TASKBOARD_CODEX_PROFILE",
+            profiles.independent.clone().into_os_string(),
+        ),
+        (
+            "CODEX_TASKBOARD_CODEX_SOURCE_PROFILE",
+            profiles.source.clone().into_os_string(),
+        ),
+        ("HOST", "127.0.0.1".into()),
+        ("PATH", runtime.launcher_path),
+    ] {
+        set_launch_environment(&mut environment, name, value);
+    }
     WindowsLaunchDescription {
         executable_path: node_path,
         arguments: vec![
             injector_path.into_os_string(),
-            "--transport-only".into(),
+            "--launch".into(),
+            "--watch".into(),
+            "--open".into(),
+            "--cdp-pipe".into(),
+            "--startup-token".into(),
+            runtime.instance_token.clone().into(),
             "--app-path".into(),
             codex_executable_path.into_os_string(),
-            "--profile-path".into(),
-            profiles.independent.clone().into_os_string(),
-            "--source-profile-path".into(),
-            profiles.source.clone().into_os_string(),
             "--transport-readiness-file".into(),
-            readiness_path.into_os_string(),
+            runtime.transport_readiness_path.into_os_string(),
             "--transport-readiness-nonce".into(),
-            startup_nonce.into(),
+            runtime.instance_token.into(),
         ],
         current_directory: app_root,
-        environment: sanitized_launch_environment(env::vars_os()),
+        environment,
     }
 }
 
@@ -820,7 +877,7 @@ mod tests {
     use super::{
         application_user_model_id, codex_launch_description, command_line, environment_block,
         package_family_name, sanitized_launch_environment, WindowsLaunchDescription,
-        WindowsProcessTree, WindowsProcessWaiter,
+        WindowsProcessTree, WindowsProcessWaiter, WindowsTaskboardRuntime,
     };
     use crate::platform::process_tree::{ProcessTree, StopResult};
     use crate::platform::CodexProfileDirectories;
@@ -960,7 +1017,7 @@ mod tests {
     }
 
     #[test]
-    fn codex_launch_description_uses_transport_only_with_nonce_bound_readiness() {
+    fn codex_launch_description_uses_full_injector_with_private_runtime() {
         let profiles = CodexProfileDirectories {
             independent: PathBuf::from(r"C:\Users\示例 User\Taskboard\codex-profile"),
             source: PathBuf::from(r"C:\Users\示例 User\AppData\Roaming\Codex"),
@@ -971,38 +1028,96 @@ mod tests {
             PathBuf::from(r"C:\Program Files\Taskboard\resources\app"),
             PathBuf::from(r"C:\Program Files\WindowsApps\OpenAI.Codex\app\ChatGPT.exe"),
             &profiles,
-            PathBuf::from(r"C:\Users\示例 User\Taskboard\transport ready.json"),
-            "00000000-0000-4000-8000-000000000053",
+            WindowsTaskboardRuntime {
+                data_directory: PathBuf::from(r"C:\Users\示例 User\Taskboard"),
+                runtime_file: PathBuf::from(r"C:\Users\示例 User\Taskboard\launcher-runtime.json"),
+                instance_token: "00000000-0000-4000-8000-000000000054".into(),
+                instance_secret: "fixture-secret-not-for-command-line".into(),
+                version: "0.2.2".into(),
+                launcher_path: OsString::from(
+                    r"C:\Program Files\Taskboard\resources\bin;C:\Windows\System32",
+                ),
+                transport_readiness_path: PathBuf::from(
+                    r"C:\Users\示例 User\Taskboard\transport ready.json",
+                ),
+            },
         );
 
-        assert_eq!(description.arguments[1], "--transport-only");
-        assert_eq!(description.arguments[2], "--app-path");
-        assert_eq!(description.arguments[4], "--profile-path");
+        assert_eq!(description.arguments[1], "--launch");
+        assert_eq!(description.arguments[2], "--watch");
+        assert_eq!(description.arguments[3], "--open");
+        assert_eq!(description.arguments[4], "--cdp-pipe");
+        assert_eq!(description.arguments[5], "--startup-token");
         assert_eq!(
-            PathBuf::from(&description.arguments[5]),
-            profiles.independent
+            description.arguments[6],
+            "00000000-0000-4000-8000-000000000054"
         );
-        assert_eq!(description.arguments[6], "--source-profile-path");
-        assert_eq!(PathBuf::from(&description.arguments[7]), profiles.source);
-        assert_eq!(description.arguments[8], "--transport-readiness-file");
+        assert_eq!(description.arguments[7], "--app-path");
+        assert_eq!(description.arguments[9], "--transport-readiness-file");
         assert_eq!(
-            PathBuf::from(&description.arguments[9]),
+            PathBuf::from(&description.arguments[10]),
             PathBuf::from(r"C:\Users\示例 User\Taskboard\transport ready.json")
         );
-        assert_eq!(description.arguments[10], "--transport-readiness-nonce");
+        assert_eq!(description.arguments[11], "--transport-readiness-nonce");
         assert_eq!(
-            description.arguments[11],
-            "00000000-0000-4000-8000-000000000053"
+            description.arguments[12],
+            "00000000-0000-4000-8000-000000000054"
         );
+        let environment = description
+            .environment
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.to_string_lossy().into_owned(),
+                    value.to_string_lossy().into_owned(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        assert_eq!(environment["CODEX_TASKBOARD_HOST"], "127.0.0.1");
+        assert_eq!(environment["CODEX_TASKBOARD_PORT"], "0");
+        assert_eq!(
+            environment["CODEX_TASKBOARD_INSTANCE_SECRET"],
+            "fixture-secret-not-for-command-line"
+        );
+        assert_eq!(
+            environment["CODEX_TASKBOARD_CODEX_PROFILE"],
+            profiles.independent.to_string_lossy()
+        );
+        assert_eq!(
+            environment["CODEX_TASKBOARD_CODEX_SOURCE_PROFILE"],
+            profiles.source.to_string_lossy()
+        );
+        assert_eq!(environment["HOST"], "127.0.0.1");
+        assert!(environment["PATH"].starts_with(r"C:\Program Files\Taskboard\resources\bin"));
+        assert!(!description
+            .arguments
+            .iter()
+            .any(|argument| argument == "fixture-secret-not-for-command-line"));
         assert!(!description
             .arguments
             .iter()
             .any(|argument| { argument.to_string_lossy().contains("remote-debugging") }));
-        assert!(!description.environment.iter().any(|(name, _)| {
-            name.to_string_lossy()
-                .to_ascii_uppercase()
-                .starts_with("CODEX_TASKBOARD_")
-        }));
+        let mut taskboard_names = description
+            .environment
+            .iter()
+            .map(|(name, _)| name.to_string_lossy().to_ascii_uppercase())
+            .filter(|name| name.starts_with("CODEX_TASKBOARD_"))
+            .collect::<Vec<_>>();
+        taskboard_names.sort();
+        assert_eq!(
+            taskboard_names,
+            [
+                "CODEX_TASKBOARD_CODEX_PROFILE",
+                "CODEX_TASKBOARD_CODEX_SOURCE_PROFILE",
+                "CODEX_TASKBOARD_DATA_DIR",
+                "CODEX_TASKBOARD_HOST",
+                "CODEX_TASKBOARD_INSTANCE_SECRET",
+                "CODEX_TASKBOARD_INSTANCE_TOKEN",
+                "CODEX_TASKBOARD_PORT",
+                "CODEX_TASKBOARD_RUNTIME_FILE",
+                "CODEX_TASKBOARD_VERSION",
+            ]
+        );
     }
 
     #[test]

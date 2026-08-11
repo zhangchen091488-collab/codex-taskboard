@@ -142,7 +142,10 @@ test("Windows process-tree lifecycle owns a kill-on-close Job Object", () => {
 });
 
 test("Windows waits for a nonce-bound private CDP pipe without exposing a debug port", () => {
-  assert.match(windowsPlatformSource, /"--transport-only"/);
+  assert.match(windowsPlatformSource, /"--launch"/);
+  assert.match(windowsPlatformSource, /"--watch"/);
+  assert.match(windowsPlatformSource, /"--open"/);
+  assert.match(windowsPlatformSource, /"--cdp-pipe"/);
   assert.match(windowsPlatformSource, /"--transport-readiness-file"/);
   assert.match(windowsPlatformSource, /"--transport-readiness-nonce"/);
   assert.match(windowsPlatformSource, /pub fn try_wait/);
@@ -150,6 +153,8 @@ test("Windows waits for a nonce-bound private CDP pipe without exposing a debug 
   assert.match(launcherSource, /Duration::from_secs\(35\)/);
   assert.match(rustTransportReadinessSource, /"pipe"/);
   assert.match(nodeTransportReadinessSource, /transport: "pipe"/);
+  assert.match(windowsPlatformSource, /CODEX_TASKBOARD_INSTANCE_SECRET/);
+  assert.match(windowsPlatformSource, /CODEX_TASKBOARD_PORT", "0"/);
   assert.doesNotMatch(windowsPlatformSource, /remote-debugging-port|0\.0\.0\.0/);
   assert.doesNotMatch(nodeTransportReadinessSource, /\b(?:token|password|url|port)\b/i);
 });

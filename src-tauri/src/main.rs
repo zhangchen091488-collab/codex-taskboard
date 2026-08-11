@@ -606,6 +606,8 @@ fn start_launcher_locked(
     let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.intentional_stop.store(false, Ordering::SeqCst);
     let startup_nonce = Uuid::new_v4().to_string();
+    let instance_secret = Uuid::new_v4().to_string();
+    let version = state.snapshot.lock().unwrap().version.clone();
     let transport_readiness_path = state
         .data_directory
         .join(format!("transport-readiness-{startup_nonce}.json"));
@@ -614,14 +616,24 @@ fn start_launcher_locked(
             return Err("无法清理旧的 Codex transport readiness 文件".into());
         }
     }
+    let inherited_path = std::env::var_os("PATH");
+    let launcher_path = platform::launcher_path(&resource_directory, inherited_path.as_deref())
+        .map_err(|error| format!("无法构造任务面板 PATH：{error}"))?;
     let launch_description = platform::codex_launch_description(
         node_path,
         injector_path,
         app_root,
         codex_installation.executable_path.clone(),
         &codex_profiles,
-        transport_readiness_path.clone(),
-        &startup_nonce,
+        platform::WindowsTaskboardRuntime {
+            data_directory: state.data_directory.clone(),
+            runtime_file: state.data_directory.join("launcher-runtime.json"),
+            instance_token: startup_nonce.clone(),
+            instance_secret,
+            version,
+            launcher_path,
+            transport_readiness_path: transport_readiness_path.clone(),
+        },
     );
 
     update_snapshot(app, state, |snapshot| {
