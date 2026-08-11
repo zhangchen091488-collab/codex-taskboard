@@ -52,6 +52,10 @@ const windowsTaskctlFixture = await readFile(
   new URL("./windows-taskctl-wrapper.ps1", import.meta.url),
   "utf8",
 );
+const windowsRustTestRunner = await readFile(
+  new URL("./windows-rust-tests.ps1", import.meta.url),
+  "utf8",
+);
 
 test("the launcher keeps OS-specific app setup behind one platform boundary", () => {
   assert.match(launcherSource, /platform::configure_app\(app\)/);
@@ -249,13 +253,19 @@ test("release signing is tag-only and PR CI builds the real unsigned app bundle"
   assert.match(checkWorkflow, /npm run app:verify:windows-resources/);
   assert.match(checkWorkflow, /windows-taskctl-wrapper\.ps1 -ProjectRoot/);
   assert.match(checkWorkflow, /node --test[\s\S]*test\/process-lifecycle-matrix\.test\.mjs/);
-  assert.match(
-    checkWorkflow,
-    /cargo test --locked --manifest-path src-tauri\/Cargo\.toml --target x86_64-pc-windows-msvc/,
-  );
+  assert.match(checkWorkflow, /windows-rust-tests\.ps1 -ProjectRoot/);
   assert.doesNotMatch(checkWorkflow, /check-only Windows icon placeholder/);
   assert.doesNotMatch(checkWorkflow, /New-Item -ItemType File.*node-x86_64-pc-windows-msvc\.exe/);
   assert.doesNotMatch(checkWorkflow, /toolchain: 1\.88\.0/);
+});
+
+test("Windows Rust CI fails closed and reports the exact failing lifecycle tests", () => {
+  assert.match(windowsRustTestRunner, /& cargo @cargoArguments/);
+  assert.match(windowsRustTestRunner, /"--list" "--format" "terse"/);
+  assert.match(windowsRustTestRunner, /"--exact" \$testName "--nocapture"/);
+  assert.match(windowsRustTestRunner, /::error file=src-tauri\/src\/platform\/windows\.rs/);
+  assert.match(windowsRustTestRunner, /exit 1/);
+  assert.doesNotMatch(checkWorkflow, /continue-on-error/);
 });
 
 test("Windows taskctl fixture captures an intentional exit through an absolute cmd harness", () => {

@@ -113,7 +113,8 @@ jobs:
           test/process-tree.test.mjs
           test/taskboard-supervisor.test.mjs
       - name: Run the Windows launcher lifecycle tests
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
+        shell: pwsh
+        run: .\test\windows-rust-tests.ps1 -ProjectRoot .
       - name: Check the Windows launcher target
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc
       - name: Build the real unsigned NSIS bundle
