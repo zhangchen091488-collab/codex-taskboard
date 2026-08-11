@@ -14,12 +14,8 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
-
-if (process.platform !== "darwin") {
-  throw new Error("Codex Taskboard for macOS must be prepared on macOS");
-}
 
 const nodeVersion = "22.23.2";
 const nodeArchitectures = ["arm64", "x64"];
@@ -27,10 +23,17 @@ const nodeArchiveSha256 = {
   arm64: "61130f394c1630d211dd50aecc4353d379480f36d3ac913cd85dbba1aed585c6",
   x64: "58e99022c2ff89395576cc7fd4d98cea24bb68081475d5f88b801ee8729fb026",
 };
-const supportedTargets = new Set([
-  "aarch64-apple-darwin",
-  "x86_64-apple-darwin",
-  "universal-apple-darwin",
+const targetsByPlatform = new Map([
+  ["darwin", new Set([
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "universal-apple-darwin",
+  ])],
+  ["win32", new Set(["x86_64-pc-windows-msvc"])],
+]);
+const defaultTargets = new Map([
+  ["darwin", "universal-apple-darwin"],
+  ["win32", "x86_64-pc-windows-msvc"],
 ]);
 const scriptPath = fileURLToPath(import.meta.url);
 const projectRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -39,19 +42,35 @@ const binariesDirectory = path.join(tauriRoot, "binaries");
 const resourcesDirectory = path.join(tauriRoot, "resources");
 const runtimeCacheDirectory = path.join(projectRoot, "dist", "tauri-runtime-cache");
 const extractionDirectory = path.join(runtimeCacheDirectory, "extracted");
-const target = parseTarget(process.argv.slice(2));
 
-function parseTarget(argv) {
-  let selected = "universal-apple-darwin";
+function platformForTarget(target) {
+  for (const [platform, targets] of targetsByPlatform) {
+    if (targets.has(target)) return platform;
+  }
+  throw new Error(`Unsupported Tauri target: ${target}`);
+}
+
+export function parsePrepareArguments(argv, { hostPlatform = process.platform } = {}) {
+  let target;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
-    if (argument === "--target") selected = argv[++index];
-    else throw new Error(`Unknown option: ${argument}`);
+    if (argument !== "--target") throw new Error(`Unknown option: ${argument}`);
+    if (target !== undefined) throw new Error("The --target option may only be specified once");
+    target = argv[index + 1];
+    if (!target || target.startsWith("--")) {
+      throw new Error("The --target option requires a value");
+    }
+    index += 1;
   }
-  if (!supportedTargets.has(selected)) {
-    throw new Error(`Unsupported macOS target: ${selected}`);
+
+  if (target === undefined) {
+    target = defaultTargets.get(hostPlatform);
+    if (!target) {
+      throw new Error(`Unsupported preparation platform: ${hostPlatform}`);
+    }
   }
-  return selected;
+
+  return { platform: platformForTarget(target), target };
 }
 
 function run(command, args) {
@@ -188,7 +207,9 @@ async function copyApplicationResources() {
     path.join(projectRoot, "cli", "taskctl.mjs"),
     path.join(appResources, "cli", "taskctl.mjs"),
   );
+}
 
+async function prepareMacosTaskctlWrapper() {
   const taskctlWrapper = `#!/bin/zsh
 set -u
 
@@ -204,8 +225,39 @@ exec "$CONTENTS_DIR/MacOS/node" "$CONTENTS_DIR/Resources/app/cli/taskctl.mjs" "$
   await chmod(taskctlPath, 0o755);
 }
 
-await mkdir(runtimeCacheDirectory, { recursive: true });
-await copyApplicationResources();
-await prepareNodeRuntime();
-await rm(extractionDirectory, { recursive: true, force: true });
-console.log(`Prepared Tauri resources for ${target} with Node.js ${nodeVersion}`);
+async function prepareMacos(target) {
+  if (process.platform !== "darwin") {
+    throw new Error("Codex Taskboard for macOS must be prepared on macOS");
+  }
+  await mkdir(runtimeCacheDirectory, { recursive: true });
+  await copyApplicationResources();
+  await prepareMacosTaskctlWrapper();
+  await prepareNodeRuntime();
+  await rm(extractionDirectory, { recursive: true, force: true });
+  console.log(`Prepared Tauri resources for ${target} with Node.js ${nodeVersion}`);
+}
+
+async function prepareWindows() {
+  throw new Error(
+    "Windows resource preparation requires the Windows Node sidecar from WIN-021",
+  );
+}
+
+export async function dispatchPreparation(
+  request,
+  handlers = { darwin: prepareMacos, win32: prepareWindows },
+) {
+  const handler = handlers[request.platform];
+  if (typeof handler !== "function") {
+    throw new Error(`Unsupported preparation platform: ${request.platform}`);
+  }
+  return handler(request.target);
+}
+
+export async function main(argv = process.argv.slice(2)) {
+  return dispatchPreparation(parsePrepareArguments(argv));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  await main();
+}
